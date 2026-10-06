@@ -1,0 +1,210 @@
+{
+  "config": {
+    "seeds": [
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51
+    ],
+    "graph_seed": 42,
+    "seed_controls": "train/val/test split and weight initialization",
+    "epochs": 200,
+    "lr": 0.01,
+    "n_hidden": 8,
+    "n_pass": 14,
+    "n_fail": 10,
+    "p_same": 0.35,
+    "p_cross": 0.08
+  },
+  "graph_stats": {
+    "num_nodes": 24,
+    "num_edges": 63,
+    "num_classes": 2,
+    "feature_dimensions": 3,
+    "class_distribution": {
+      "0": 10,
+      "1": 14
+    },
+    "graph_density": 0.22826086956521738,
+    "average_degree": 5.25,
+    "min_degree": 1,
+    "max_degree": 9,
+    "is_directed": false,
+    "has_self_loops": false,
+    "is_connected": true,
+    "num_connected_components": 1,
+    "same_label_edges": 50,
+    "cross_label_edges": 13,
+    "homophily_ratio": 0.7936507936507936
+  },
+  "homophily": {
+    "total_edges": 63,
+    "same_label_edges": 50,
+    "cross_label_edges": 13,
+    "homophily_ratio": 0.7936507936507936
+  },
+  "summary": {
+    "MLP": {
+      "accuracy_mean": 1.0,
+      "accuracy_std": 0.0,
+      "train_accuracy_mean": 1.0,
+      "train_accuracy_std": 0.0,
+      "f1_mean": 1.0,
+      "f1_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "individual_accuracies": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "individual_f1s": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_params": 50
+    },
+    "GCN-1": {
+      "accuracy_mean": 0.9833333333333334,
+      "accuracy_std": 0.04999999999999999,
+      "train_accuracy_mean": 0.9142857142857143,
+      "train_accuracy_std": 0.042857142857142885,
+      "f1_mean": 0.9666666666666666,
+      "f1_std": 0.1,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "recall_mean": 0.95,
+      "recall_std": 0.15,
+      "individual_accuracies": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.8333333333333334,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "individual_f1s": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.6666666666666666,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "n_params": 6
+    },
+    "GCN-2": {
+      "accuracy_mean": 0.9833333333333334,
+      "accuracy_std": 0.04999999999999999,
+      "train_accuracy_mean": 0.9928571428571429,
+      "train_accuracy_std": 0.02142857142857142,
+      "f1_mean": 0.9666666666666666,
+      "f1_std": 0.1,
+      "precision_mean": 0.95,
+      "precision_std": 0.15,
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "individual_accuracies": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.8333333333333334,
+        1.0,
+        1.0
+      ],
+      "individual_f1s": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.6666666666666666,
+        1.0,
+        1.0
+      ],
+      "n_params": 40
+    },
+    "GCN-3": {
+      "accuracy_mean": 0.8833333333333332,
+      "accuracy_std": 0.10671873729054748,
+      "train_accuracy_mean": 1.0,
+      "train_accuracy_std": 0.0,
+      "f1_mean": 0.8603174603174601,
+      "f1_std": 0.13834132425079954,
+      "precision_mean": 0.8666666666666666,
+      "precision_std": 0.1755942292142123,
+      "recall_mean": 0.8966666666666667,
+      "recall_std": 0.1715614564327703,
+      "individual_accuracies": [
+        0.6666666666666666,
+        1.0,
+        0.8333333333333334,
+        0.8333333333333334,
+        1.0,
+        0.8333333333333334,
+        1.0,
+        0.8333333333333334,
+        0.8333333333333334,
+        1.0
+      ],
+      "individual_f1s": [
+        0.6666666666666666,
+        1.0,
+        0.8571428571428571,
+        0.8888888888888888,
+        1.0,
+        0.6666666666666666,
+        1.0,
+        0.6666666666666666,
+        0.8571428571428571,
+        1.0
+      ],
+      "n_params": 104
+    }
+  },
+  "ablation": {
+    "random_graph_accuracy_mean": 0.4666666666666667,
+    "random_graph_accuracy_std": 0.1632993161855452,
+    "random_graph_f1_mean": 0.5345238095238095,
+    "random_graph_f1_std": 0.15671388056841612,
+    "random_graph_homophily_mean": 0.4944772166369762,
+    "random_graph_homophily_std": 0.06485210292591218
+  }
+}
