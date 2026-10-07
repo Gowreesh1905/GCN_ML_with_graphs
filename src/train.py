@@ -2,13 +2,15 @@
 train.py — Training Loop for GCN and MLP Models
 
 Implements the training procedure with:
-- Adam optimizer
+- Adam optimizer (optional L2 weight decay)
 - Cross-entropy loss on logits (numerically stable)
 - Node-level train/validation masking
+- Optional early stopping on validation loss, restoring the best weights
 - Epoch-level logging of loss and accuracy
 - Reproducible seeding
 """
 
+import copy
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -30,6 +32,8 @@ def train_model(
     seed: int = 42,
     verbose: bool = True,
     print_every: int = 20,
+    weight_decay: float = 0.0,
+    patience: Optional[int] = None,
 ) -> Dict[str, List[float]]:
     """
     Train a GCN or MLP model using Adam and cross-entropy loss.
@@ -65,12 +69,21 @@ def train_model(
         Whether to print progress.
     print_every : int
         Print interval.
+    weight_decay : float
+        L2 penalty passed to Adam (0 disables it).
+    patience : int or None
+        Early stopping. If set, training stops once the validation loss has
+        not improved for `patience` consecutive epochs, and the model is
+        restored to the weights from the epoch with the lowest validation
+        loss. If None, training runs for all `epochs` and keeps the final
+        weights.
 
     Returns
     -------
     history : dict
-        Keys: train_loss, val_loss, train_acc, val_acc
-        Each is a list of length `epochs`.
+        Keys: train_loss, val_loss, train_acc, val_acc — lists with one
+        entry per epoch actually run — and best_epoch (int), the epoch
+        whose weights the model ends with.
     """
     set_all_seeds(seed)
 
@@ -80,7 +93,7 @@ def train_model(
     # numerical overflow/underflow.
     criterion = nn.CrossEntropyLoss()
 
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     history = {
         "train_loss": [],
@@ -88,6 +101,10 @@ def train_model(
         "train_acc": [],
         "val_acc": [],
     }
+
+    best_val_loss = float("inf")
+    best_epoch = epochs - 1
+    best_state = None
 
     for epoch in range(epochs):
         # --- Training ---
@@ -135,5 +152,21 @@ def train_model(
                 f"Train Acc: {train_acc:.4f} | "
                 f"Val Acc: {val_acc:.4f}"
             )
+
+        # --- Early stopping on validation loss ---
+        if patience is not None:
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch = epoch
+                best_state = copy.deepcopy(model.state_dict())
+            elif epoch - best_epoch >= patience:
+                if verbose:
+                    print(f"Early stopping at epoch {epoch} "
+                          f"(best validation loss at epoch {best_epoch})")
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    history["best_epoch"] = best_epoch if patience is not None else epoch
 
     return history

@@ -67,7 +67,7 @@ Cross-entropy measures the difference between two probability distributions. In 
 ## Architecture
 
 **17. Why use three layers?**
-A three-layer GCN allows nodes to aggregate information from up to 3 hops away in the graph. This was chosen to study the effects of a slightly deeper network on a small graph compared to 1- or 2-layer models. In our results the extra depth did not help: GCN-3 fit every training node but generalized worse (88.3% vs 98.3% test accuracy), which is a sign of overfitting.
+A three-layer GCN lets each node aggregate information from up to 3 hops away (friends of friends of friends). It was chosen to study the effect of depth against 1- and 2-layer models. In our results depth helped slightly — 90.5% (1 layer), 92.5% (2), 94.0% (3) — but the steps are smaller than the variation between splits (about ±4.5 points), so the trend is suggestive rather than conclusive. Three layers showed no over-smoothing or overfitting on this 200-node graph.
 
 **18. What happens if there is only one layer?**
 A 1-layer GCN only aggregates information from a node's immediate (1-hop) neighbours. It has a limited receptive field, meaning it cannot capture wider structural patterns in the graph.
@@ -127,16 +127,23 @@ An MLP serves as a baseline that only uses node features and ignores graph struc
 Comparing different depths isolates the effect of the receptive field and model capacity, and lets us look for phenomena like over-smoothing or overfitting. It helps determine the right amount of neighbourhood aggregation for the specific graph topology.
 
 **33. Why use multiple random seeds?**
-Neural network initialization, dataset splitting, and graph generation (if stochastic) introduce randomness. On a tiny dataset, a single run might yield anomalously good or bad results by chance. Averaging over multiple seeds provides a more statistically robust estimate of the model's true expected performance. In this project each of the 10 seeds draws both a new train/validation/test split and a new initialization; varying only the initialization would re-test the same 6 test nodes every time and hide how much the result depends on which students land in the test set.
+Neural network initialization, dataset splitting, and graph generation (if stochastic) introduce randomness. A single run might yield anomalously good or bad results by chance. Averaging over multiple seeds provides a more statistically robust estimate of the model's true expected performance. In this project each of the 10 seeds draws both a new train/validation/test split and a new initialization; varying only the initialization would re-test the same 40 test nodes every time and hide how much the result depends on which students land in the test set.
 
 **34. Why is accuracy alone insufficient?**
 If classes are imbalanced (e.g., 90% Pass, 10% Fail), a model that always predicts "Pass" gets 90% accuracy but is useless. Precision, recall, F1-score, and the confusion matrix provide a complete picture of how the model performs across both majority and minority classes.
 
 **35. What are the limitations of the experiment?**
-The main limitations are the use of a tiny, synthetic dataset (meaning results don't generalize to the real world), the reliance on dense matrix operations (not scalable), a very small test set (high variance in evaluation metrics), no early stopping or regularization, and the simplicity of the feature distributions which made the task trivially solvable by the MLP baseline.
+The dataset is synthetic, and its homophily (0.81) and feature overlap are chosen parameters, so the size of the GCN's advantage reflects those choices rather than real data. With 40 test nodes per split, one mistake moves accuracy by 2.5 points, so the differences between GCN depths are within the noise. The graph is fixed across seeds, hyperparameters were not tuned, and the dense $N \times N$ adjacency matrix would not scale to large graphs.
 
-**36. Why did the 3-layer GCN perform worse — over-smoothing or overfitting?**
-The evidence points to overfitting. GCN-3 reaches 100% training accuracy with near-zero training loss, but 88.3% test accuracy. Over-smoothing makes node representations so similar that the model cannot separate classes — that would lower *training* accuracy too, which does not happen. GCN-3 has 104 parameters but only 14 labelled training nodes, and trains for 200 epochs with no dropout, weight decay or early stopping, so it can memorize the training labels.
+**36. Did the 3-layer GCN over-smooth or overfit?**
+Neither. Over-smoothing — repeated averaging making all node representations alike — would lower training accuracy; GCN-3 has the highest training accuracy of the three depths (95.7%). Overfitting would show as a large gap between training and test accuracy; the gap is under 2 points (95.7% vs 94.0%). A useful check: an unregularized GCN-3 (no dropout, weight decay or early stopping) scores the same, 94.3%, because 120 labelled nodes are enough for a 104-parameter model. (An earlier version of the project with only 14 labelled nodes *did* overfit: 100% training but 88% test accuracy.)
 
-**37. If the MLP gets 100%, what does the random-graph ablation actually show?**
-It shows that a GCN depends on the graph being meaningful: on a random graph (homophily ≈ 0.49) GCN-3 drops from 88.3% to 46.7%, because aggregation mixes each student's features with those of unrelated students. It does **not** show that the graph is needed — the MLP solves the task from features alone. To show a graph benefit, the features would need to be made less separable so the MLP falls short of 100%.
+**37. What does the random-graph ablation show?**
+That a GCN depends on the graph being meaningful. Replacing the study groups with random edges (same number, homophily ≈ 0.50 instead of 0.81) drops GCN-3 from 94.0% to 50.8% — below the feature-only MLP (77.8%) and below always guessing "Pass" (55%). Aggregation over random neighbours averages each student with unrelated students and destroys the information in their own features. So the graph is not just neutral context: a good graph adds 16 points, a bad one costs 27.
+
+**38. Why does the GCN beat the MLP by so much?**
+The features overlap: Pass and Fail class means differ by less than one standard deviation, so the MLP, which judges each student in isolation, reaches only 77.8%. But 81% of edges join students with the same result, so averaging a student with their study group gives a much more reliable signal than the student alone. This is exactly the setting a GCN is designed for: ambiguous node features plus a homophilic graph.
+
+**39. What does early stopping do, and did it help?**
+After every epoch the validation loss is checked; if it has not improved for 30 epochs, training stops and the weights from the best epoch are restored. Here it did not change accuracy, because the models were not overfitting. Its practical benefit is choosing the training length automatically: the best epoch ranged from about 120 (GCN-3) to about 440 (GCN-1, whose 6 parameters learn slowly), so no single fixed epoch count would suit every model.
+

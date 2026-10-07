@@ -40,6 +40,27 @@ def _finish(fig: plt.Figure, save_path: Optional[str]) -> None:
     plt.close(fig)
 
 
+def _graph_layout(G: nx.Graph, k: Optional[float] = None) -> Dict:
+    """
+    Spring layout of the largest connected component, with any other
+    components (e.g. isolated nodes) placed in a row just below it.
+
+    A plain spring layout pushes disconnected nodes far away from the rest,
+    which shrinks the main graph into a corner of the figure.
+    """
+    components = sorted(nx.connected_components(G), key=len, reverse=True)
+    pos = nx.spring_layout(G.subgraph(components[0]), seed=42, k=k)
+    rest = [n for comp in components[1:] for n in sorted(comp)]
+    if rest:
+        xs = np.array([p[0] for p in pos.values()])
+        ys = np.array([p[1] for p in pos.values()])
+        row_x = np.linspace(xs.min(), xs.max(), len(rest) + 2)[1:-1]
+        row_y = ys.min() - 0.12 * (ys.max() - ys.min())
+        for n, x in zip(rest, row_x):
+            pos[n] = np.array([x, row_y])
+    return pos
+
+
 def plot_graph(
     G: nx.Graph,
     labels: np.ndarray,
@@ -69,7 +90,11 @@ def plot_graph(
     """
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-    pos = nx.spring_layout(G, seed=42, k=1.5)
+    # Small graphs get large, numbered nodes; large graphs get small dots
+    small = G.number_of_nodes() <= 50
+    node_size = 400 if small else 70
+
+    pos = _graph_layout(G, k=1.5 if small else None)
     color_by = labels if predictions is None else predictions
     node_colors = [CLASS_COLORS[int(color_by[n])] for n in G.nodes()]
 
@@ -79,7 +104,8 @@ def plot_graph(
         mpatches.Patch(color=CLASS_COLORS[1], label=f"Class 1: {CLASS_NAMES[1]}"),
     ]
 
-    nx.draw_networkx_edges(G, pos, ax=ax, alpha=0.3, width=1.0, edge_color="#999999")
+    nx.draw_networkx_edges(G, pos, ax=ax, alpha=0.3 if small else 0.15,
+                           width=1.0, edge_color="#999999")
 
     # Mark incorrect predictions with X markers, drawn *behind* the nodes so
     # the arms stick out around each node without hiding its number.
@@ -90,18 +116,19 @@ def plot_graph(
             # node_color, so it must not be "none" or the X is invisible.
             nx.draw_networkx_nodes(
                 G, pos, nodelist=incorrect, ax=ax,
-                node_color="black", node_size=1100,
-                linewidths=3.0, node_shape="x",
+                node_color="black", node_size=node_size * 2.75,
+                linewidths=3.0 if small else 1.8, node_shape="x",
             )
 
     nx.draw_networkx_nodes(
         G, pos, ax=ax,
         node_color=node_colors,
-        node_size=400,
+        node_size=node_size,
         edgecolors="black",
-        linewidths=1.5,
+        linewidths=1.5 if small else 0.6,
     )
-    nx.draw_networkx_labels(G, pos, ax=ax, font_size=9, font_weight="bold")
+    if small:
+        nx.draw_networkx_labels(G, pos, ax=ax, font_size=9, font_weight="bold")
 
     if predictions is not None:
         patches.append(Line2D(
@@ -167,14 +194,24 @@ def plot_training_curves(
     Parameters
     ----------
     history : dict
-        Keys: train_loss, val_loss, train_acc, val_acc.
+        Keys: train_loss, val_loss, train_acc, val_acc, and optionally
+        best_epoch (0-indexed), which is marked with a vertical line.
     """
     epochs = range(1, len(history["train_loss"]) + 1)
+    best = history.get("best_epoch")
+    # Only mark it when training ran past the kept epoch (early stopping)
+    mark_best = best is not None and best + 1 < len(history["train_loss"])
+
+    def _mark_best(ax):
+        if mark_best:
+            ax.axvline(best + 1, color="black", linestyle=":", linewidth=1.5,
+                       label=f"Weights kept (epoch {best + 1})")
 
     # --- Loss Curve ---
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     ax.plot(epochs, history["train_loss"], label="Train Loss", color="#3498DB", linewidth=2)
     ax.plot(epochs, history["val_loss"], label="Val Loss", color="#E74C3C", linewidth=2, linestyle="--")
+    _mark_best(ax)
     ax.set_xlabel("Epoch", fontsize=12)
     ax.set_ylabel("Cross-Entropy Loss", fontsize=12)
     ax.set_title(f"{title_prefix}Training & Validation Loss", fontsize=14, fontweight="bold")
@@ -186,6 +223,7 @@ def plot_training_curves(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     ax.plot(epochs, history["train_acc"], label="Train Accuracy", color="#2ECC71", linewidth=2)
     ax.plot(epochs, history["val_acc"], label="Val Accuracy", color="#F39C12", linewidth=2, linestyle="--")
+    _mark_best(ax)
     ax.set_xlabel("Epoch", fontsize=12)
     ax.set_ylabel("Accuracy", fontsize=12)
     ax.set_title(f"{title_prefix}Training & Validation Accuracy", fontsize=14, fontweight="bold")
@@ -258,7 +296,7 @@ def plot_model_comparison(
     means = [results[m]["mean"] for m in model_names]
     stds = [results[m].get("std", 0) for m in model_names]
 
-    colors = ["#E74C3C", "#3498DB", "#F39C12", "#2ECC71"]
+    colors = ["#E74C3C", "#3498DB", "#F39C12", "#2ECC71", "#9B59B6", "#7F8C8D"]
     while len(colors) < len(model_names):
         colors.extend(colors)
 
@@ -277,9 +315,10 @@ def plot_model_comparison(
         label = f"{mean:.3f}"
         if show_std and std > 0:
             label += f"±{std:.3f}"
+        # Place the label above the error bar so they don't overlap
         ax.text(
             bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.02,
+            bar.get_height() + (std if show_std else 0) + 0.02,
             label,
             ha="center", va="bottom", fontsize=10, fontweight="bold",
         )

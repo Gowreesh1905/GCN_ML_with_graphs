@@ -274,6 +274,8 @@ class MLP(nn.Module):
         Hidden dimension.
     n_classes : int
         Number of output classes.
+    dropout : float
+        Dropout rate applied to the hidden layer (default 0.0).
     """
 
     def __init__(
@@ -281,8 +283,10 @@ class MLP(nn.Module):
         n_features: int = 3,
         n_hidden: int = 8,
         n_classes: int = 2,
+        dropout: float = 0.0,
     ):
         super().__init__()
+        self.dropout = dropout
         self.fc1 = nn.Linear(n_features, n_hidden)
         self.fc2 = nn.Linear(n_hidden, n_classes)
 
@@ -306,6 +310,8 @@ class MLP(nn.Module):
         logits : torch.Tensor, shape (N, n_classes)
         """
         H = F.relu(self.fc1(X))  # N × n_hidden
+        if self.dropout > 0:
+            H = F.dropout(H, p=self.dropout, training=self.training)
         logits = self.fc2(H)     # N × n_classes
         return logits
 

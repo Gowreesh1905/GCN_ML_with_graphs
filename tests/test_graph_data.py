@@ -154,7 +154,20 @@ class TestGraphStatistics:
         assert not dataset["stats"]["is_directed"]
 
     def test_node_count(self, dataset):
-        assert dataset["stats"]["num_nodes"] == 24
+        assert dataset["stats"]["num_nodes"] == 200  # 110 Pass + 90 Fail
+
+
+class TestFeatureGap:
+    """feature_gap controls how far apart the class feature means are."""
+
+    def test_smaller_gap_brings_class_means_closer(self):
+        def class_gap(gap):
+            X, y = generate_student_features(n_pass=500, n_fail=500, seed=0, feature_gap=gap)
+            return X[y == 1].mean(axis=0) - X[y == 0].mean(axis=0)
+
+        wide, narrow = class_gap(1.0), class_gap(0.25)
+        assert np.all(wide > 0) and np.all(narrow > 0), "Pass students should score higher"
+        assert np.all(narrow < wide), "A smaller gap should bring the classes closer"
 
     def test_has_edges(self, dataset):
         assert dataset["stats"]["num_edges"] > 0

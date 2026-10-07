@@ -8,6 +8,10 @@ Each node has a binary label: 0 = Fail, 1 = Pass.
 The graph exhibits meaningful but imperfect homophily: students of the same
 class are more likely to be connected (e.g., study groups), but some
 cross-class edges exist.
+
+Defaults: 200 students (110 Pass, 90 Fail) with strongly overlapping
+features (feature_gap=0.25), so features alone are only moderately
+informative and the graph has room to help.
 """
 
 import random
@@ -31,9 +35,10 @@ def set_all_seeds(seed: int = 42) -> None:
 
 
 def generate_student_features(
-    n_pass: int = 14,
-    n_fail: int = 10,
+    n_pass: int = 110,
+    n_fail: int = 90,
     seed: int = 42,
+    feature_gap: float = 0.25,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate synthetic student features and labels.
@@ -49,6 +54,12 @@ def generate_student_features(
         Number of failing students.
     seed : int
         Random seed for reproducibility.
+    feature_gap : float
+        How far apart the class means are. 1.0 gives the reference means
+        below (classes almost perfectly separable); smaller values pull both
+        classes' means toward their midpoint, so the classes overlap more
+        and features alone become less informative. Standard deviations are
+        unchanged.
 
     Returns
     -------
@@ -60,24 +71,27 @@ def generate_student_features(
     rng = np.random.RandomState(seed)
     N = n_pass + n_fail
 
+    # Reference class means: [study_hours, attendance, assignment_score]
+    pass_ref = np.array([7.0, 80.0, 75.0])
+    fail_ref = np.array([3.0, 50.0, 40.0])
+    mid = (pass_ref + fail_ref) / 2
+    pass_mean = mid + feature_gap * (pass_ref - mid)
+    fail_mean = mid + feature_gap * (fail_ref - mid)
+
     # --- Pass students (label = 1) ---
-    # study_hours:      mean ~7, std ~1.5   (range roughly 4–10)
-    # attendance:        mean ~80, std ~10   (range roughly 60–100)
-    # assignment_score:  mean ~75, std ~10   (range roughly 55–95)
+    # std: study_hours 1.5, attendance 10, assignment_score 10
     pass_features = np.column_stack([
-        rng.normal(loc=7.0, scale=1.5, size=n_pass),    # study_hours
-        rng.normal(loc=80.0, scale=10.0, size=n_pass),  # attendance
-        rng.normal(loc=75.0, scale=10.0, size=n_pass),  # assignment_score
+        rng.normal(loc=pass_mean[0], scale=1.5, size=n_pass),   # study_hours
+        rng.normal(loc=pass_mean[1], scale=10.0, size=n_pass),  # attendance
+        rng.normal(loc=pass_mean[2], scale=10.0, size=n_pass),  # assignment_score
     ])
 
     # --- Fail students (label = 0) ---
-    # study_hours:      mean ~3, std ~1.5   (range roughly 0–6)
-    # attendance:        mean ~50, std ~12   (range roughly 25–75)
-    # assignment_score:  mean ~40, std ~12   (range roughly 15–65)
+    # std: study_hours 1.5, attendance 12, assignment_score 12
     fail_features = np.column_stack([
-        rng.normal(loc=3.0, scale=1.5, size=n_fail),    # study_hours
-        rng.normal(loc=50.0, scale=12.0, size=n_fail),  # attendance
-        rng.normal(loc=40.0, scale=12.0, size=n_fail),  # assignment_score
+        rng.normal(loc=fail_mean[0], scale=1.5, size=n_fail),   # study_hours
+        rng.normal(loc=fail_mean[1], scale=12.0, size=n_fail),  # attendance
+        rng.normal(loc=fail_mean[2], scale=12.0, size=n_fail),  # assignment_score
     ])
 
     # Clip to realistic ranges
@@ -103,8 +117,8 @@ def generate_student_features(
 
 def generate_student_graph(
     labels: np.ndarray,
-    p_same: float = 0.35,
-    p_cross: float = 0.08,
+    p_same: float = 0.06,
+    p_cross: float = 0.015,
     seed: int = 42,
 ) -> nx.Graph:
     """
@@ -334,14 +348,15 @@ def generate_random_graph(
 
 
 def build_dataset(
-    n_pass: int = 14,
-    n_fail: int = 10,
-    p_same: float = 0.35,
-    p_cross: float = 0.08,
+    n_pass: int = 110,
+    n_fail: int = 90,
+    p_same: float = 0.06,
+    p_cross: float = 0.015,
     train_ratio: float = 0.6,
     val_ratio: float = 0.2,
     seed: int = 42,
     split_seed: Optional[int] = None,
+    feature_gap: float = 0.25,
 ) -> Dict:
     """
     Build the complete dataset: features, labels, graph, masks, and tensors.
@@ -350,6 +365,8 @@ def build_dataset(
 
     Parameters
     ----------
+    feature_gap : float
+        Separation of the class feature means (see generate_student_features).
     seed : int
         Seed for the features, labels, and graph.
     split_seed : int or None
@@ -367,7 +384,7 @@ def build_dataset(
     set_all_seeds(seed)
 
     # Generate features and labels
-    features_raw, labels = generate_student_features(n_pass, n_fail, seed)
+    features_raw, labels = generate_student_features(n_pass, n_fail, seed, feature_gap)
 
     # Generate graph
     G = generate_student_graph(labels, p_same, p_cross, seed)
