@@ -1,896 +1,236 @@
 % =====================================================================
-%  Node Classification Using a Three-Layer Graph Convolutional Network
-%  Compile from this directory (report/):  pdflatex report.tex  (run twice)
-%  Figures are read from ../figures/
+%  GCN Toy Project - Project Report (about 5-6 pages)
+%  Compile from report/:  pdflatex report.tex   (figures: ../figures/)
 % =====================================================================
 \documentclass[11pt,a4paper]{article}
 
-% ---------- Encoding & fonts ----------
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
 \usepackage{microtype}
-
-% ---------- Layout ----------
-\usepackage[a4paper,margin=2.5cm]{geometry}
-\usepackage{setspace}
-\setstretch{1.1}
-\usepackage{enumitem}
-\setlist{itemsep=2pt,topsep=4pt}
-
-% ---------- Mathematics ----------
+\usepackage[a4paper,margin=2.3cm]{geometry}
 \usepackage{amsmath,amssymb,bm}
-
-% ---------- Tables & figures ----------
 \usepackage{booktabs}
-\usepackage{array}
-\usepackage{multirow}
 \usepackage{graphicx}
 \graphicspath{{../figures/}{figures/}}  % works from report/ or the repo root
 \usepackage{float}
 \usepackage{caption}
 \usepackage{subcaption}
 \captionsetup{font=small,labelfont=bf}
-
-% ---------- Diagrams ----------
+\usepackage{enumitem}
+\setlist{itemsep=1pt,topsep=3pt}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta}
-
-% ---------- Code ----------
 \usepackage{xcolor}
-\usepackage{listings}
-\definecolor{codebg}{RGB}{247,247,247}
-\definecolor{codekw}{RGB}{0,82,147}
-\definecolor{codecm}{RGB}{106,115,125}
-\definecolor{codestr}{RGB}{163,21,21}
-\lstset{
-  language=Python,
-  basicstyle=\ttfamily\small,
-  keywordstyle=\color{codekw}\bfseries,
-  commentstyle=\color{codecm}\itshape,
-  stringstyle=\color{codestr},
-  backgroundcolor=\color{codebg},
-  frame=single, rulecolor=\color{black!15},
-  breaklines=true, columns=fullflexible,
-  showstringspaces=false,
-  xleftmargin=4pt, xrightmargin=4pt,
-  aboveskip=8pt, belowskip=8pt
-}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
 
-% ---------- Links (load last) ----------
-\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
 
-% ---------- Notation ----------
 \newcommand{\Ahat}{\hat{A}}
 \newcommand{\Dhat}{\hat{D}}
 \newcommand{\Anorm}{\tilde{A}}
 \newcommand{\R}{\mathbb{R}}
 
-% =====================================================================
-\title{\textbf{Node Classification Using a Three-Layer\\Graph Convolutional Network}\\[6pt]
-\large Implementation, Mathematical Analysis, and Experimental Evaluation}
-% TODO: replace with your name, register number, course and institution
-\author{Your Name\\[2pt]
-\small Course: Machine Learning with Graphs\\
-\small Institution Name}
-\date{\today}
-
 \begin{document}
-\maketitle
+
+% ---------------------------------------------------------------------
+\begin{center}
+  {\LARGE\bfseries Node Classification with a\\[2pt] Three-Layer Graph Convolutional Network}\\[8pt]
+  % TODO: replace with your name, register number and course
+  {\large Your Name \quad\textbar\quad Machine Learning with Graphs}\\[2pt]
+  {\small Code: \url{https://github.com/Gowreesh1905/GCN_ML_with_graphs}}
+\end{center}
+\vspace{4pt}
 
 % =====================================================================
-\begin{abstract}
-\noindent
-This project investigates how graph structure and neighbourhood aggregation affect node classification using a Graph Convolutional Network (GCN). We implement a three-layer GCN from scratch in PyTorch, without high-level graph neural network libraries, and use it to classify students in a synthetic study-group graph as \emph{Pass} or \emph{Fail}. The project demonstrates the complete mathematical pipeline, from adjacency-matrix construction through symmetric normalization to multi-layer neighbourhood aggregation. Experiments over ten random seeds, each drawing a new train/validation/test split and a new weight initialization, compare the 3-layer GCN against an MLP baseline and against 1- and 2-layer GCNs. The feature-only MLP achieves perfect test accuracy and GCN-1 and GCN-2 reach 98.3\%, while the 3-layer GCN achieves $88.3\% \pm 10.7\%$ despite fitting every training node; this train/test gap points to overfitting rather than over-smoothing. A graph ablation shows that replacing the graph with a random one (no homophily) degrades the 3-layer GCN to 46.7\%, i.e.\ aggregation over a misleading graph is harmful. All results are reproducible and reported without overclaiming.
-\end{abstract}
+\section{What This Project Does}
 
-\tableofcontents
-\newpage
+Many datasets are naturally \emph{graphs}: people connected by friendships, papers connected by citations, students connected by study groups. In such data, a node's connections often say something about the node itself. An ordinary neural network looks at each example on its own and ignores these connections. A \textbf{Graph Convolutional Network (GCN)} is designed to use them: each node updates its representation by combining its own features with those of its neighbours.
 
-% =====================================================================
-\section{Introduction}
+In this project I built a three-layer GCN \textbf{from scratch in PyTorch}, using only matrix operations (no graph library such as PyTorch Geometric), so that every mathematical step is visible in the code. The model solves a \textbf{node classification} task: given a graph of 200 students in which only some students' results are known, predict whether each remaining student will \emph{Pass} or \emph{Fail}.
 
-Many real-world datasets naturally exhibit graph structure: social networks, citation networks, molecular structures and transportation systems. In these domains, entities (\emph{nodes}) are interconnected by relationships (\emph{edges}), and the structure of these connections carries meaningful information.
-
-Conventional neural networks such as Multi-Layer Perceptrons (MLPs) process each data point independently, ignoring the relational structure between them. Applied to graph-structured data, an MLP can use only the features of each node in isolation, discarding potentially valuable information about the node's neighbourhood.
-
-\textbf{Graph Neural Networks (GNNs)} address this limitation with architectures that operate directly on graphs. Among GNN variants, the \textbf{Graph Convolutional Network (GCN)} of Kipf and Welling~\cite{kipf2017} is one of the most widely studied. A GCN performs \emph{neighbourhood aggregation}: each node's representation is updated by combining its own features with those of its neighbours, weighted by the graph structure.
-
-\textbf{Node classification} is a fundamental task in graph machine learning: given a partially labelled graph, predict the labels of the remaining nodes. This is a \emph{transductive} setting: the entire graph structure is visible during training and inference, but only a subset of node labels is used for training.
-
-This project implements a three-layer GCN from scratch for node classification on a synthetic student-performance graph, providing a complete walkthrough of the mathematics, implementation and experimental evaluation.
-
-% =====================================================================
-\section{Problem Statement}
-
-\noindent Given
-\begin{itemize}
-  \item a graph $G = (V, E)$ with $N = |V|$ nodes and $|E|$ edges,
-  \item a node feature matrix $X \in \R^{N \times F}$ with $F = 3$,
-  \item node labels $Y \in \{0, 1\}^N$ (binary classification: Fail/Pass), and
-  \item a train/validation/test split of the nodes,
-\end{itemize}
-\textbf{learn} a function $f : (G, X) \rightarrow \hat{Y}$ using a three-layer GCN that predicts node classes from both node features and graph structure.
-
-% =====================================================================
-\section{Objectives}
-
+The project then asks three questions:
 \begin{enumerate}
-  \item Represent a graph mathematically using adjacency and degree matrices.
-  \item Implement symmetric adjacency normalization explicitly.
-  \item Build a GCN layer that performs neighbourhood aggregation via matrix multiplication.
-  \item Train a three-layer GCN for node classification.
-  \item Compare GCN performance against an MLP baseline and GCNs of varying depth.
-  \item Investigate the effect of graph structure through ablation studies.
-  \item Analyse computational complexity.
-  \item Discuss limitations honestly.
+  \item Does the GCN do better than a plain neural network that ignores the graph?
+  \item How does the number of GCN layers (1, 2 or 3) affect accuracy?
+  \item Does the GCN actually depend on the graph being meaningful?
 \end{enumerate}
 
 % =====================================================================
-\section{Background}
+\section{The Dataset}
 
-\paragraph{Graphs.} A graph $G = (V, E)$ consists of a set of nodes (vertices) $V$ and edges $E \subseteq V \times V$. In an \emph{undirected} graph, an edge $(i, j)$ implies $(j, i)$.
+The data is \textbf{synthetic}, generated by the code with a fixed random seed so that every run is identical.
 
-\paragraph{Adjacency matrix.} The adjacency matrix $A \in \R^{N \times N}$ encodes connectivity:
-\begin{equation}
-  A_{ij} =
-  \begin{cases}
-    1 & \text{if } (i, j) \in E, \\
-    0 & \text{otherwise.}
-  \end{cases}
-\end{equation}
-For an undirected graph, $A = A^{\top}$.
+\textbf{Nodes (students).} There are 200 students: 110 who pass and 90 who fail. Each student has three features: \emph{study hours}, \emph{attendance} and \emph{assignment score}. Passing students score higher on average, but the two groups \textbf{overlap strongly}: many failing students study as much as passing ones. This is deliberate. If the features separated the groups perfectly, any model would be perfect and the graph would have nothing to add.
 
-\paragraph{Degree matrix.} The degree matrix $D$ is diagonal, with $D_{ii} = \sum_j A_{ij}$ equal to the number of edges incident to node $i$.
+\textbf{Edges (study groups).} Two students are connected with probability 0.06 if they have the same result and 0.015 if they do not. This produces 753 edges, about 7.5 friends per student, and $608/753 = 81\%$ of edges join students with the same result. This tendency of connected nodes to share a label is called \textbf{homophily}, and it is exactly what a GCN can take advantage of. (One student happens to have no connections.)
 
-\paragraph{Node features.} Each node $i$ has a feature vector $\bm{x}_i \in \R^F$; stacking them gives $X \in \R^{N \times F}$.
+\textbf{Labelled and unlabelled students.} The students are split into 120 \emph{training} nodes (labels visible to the model), 40 \emph{validation} nodes (used to decide when to stop training) and 40 \emph{test} nodes (labels hidden and used only to measure accuracy). The model always sees the whole graph, including the connections of test students; only their labels are hidden. This is called a \emph{transductive} setting. Features are standardized using the mean and standard deviation of the training nodes only, so no information leaks from the test set.
 
-\paragraph{Neighbourhood and message passing.} The neighbourhood $\mathcal{N}(i)$ of node $i$ is the set of nodes connected to $i$. \emph{Message passing} is the paradigm in which nodes exchange information with their neighbours to update their representations.
-
-\paragraph{Graph convolution.} A graph convolution generalizes convolution from regular grids (images) to irregular graphs: rather than sliding a fixed kernel, it aggregates information from each node's neighbourhood.
-
-\paragraph{Graph Convolutional Network.} The GCN~\cite{kipf2017} defines a layer-wise propagation rule that performs neighbourhood aggregation followed by a linear transformation. Stacking layers lets information propagate across multiple hops.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.58\textwidth]{fig1_graph_true_labels.png}
+\caption{The student graph. Green = Pass, red = Fail. Students mostly connect to others with the same result, so the two groups form two loose clusters.}
+\label{fig:graph}
+\end{figure}
 
 % =====================================================================
-\section{Mathematical Foundation}
+\section{How a GCN Works}
 
-\subsection{Adjacency Matrix}
-For our graph with $N = 24$ nodes,
-\begin{equation}
-  A \in \R^{24 \times 24}, \qquad A_{ij} \in \{0, 1\}, \qquad A = A^{\top}.
-\end{equation}
+The graph is stored as an \textbf{adjacency matrix} $A \in \R^{200 \times 200}$, where $A_{ij}=1$ if students $i$ and $j$ are connected and $0$ otherwise. Because study groups go both ways, $A$ is symmetric. The features are stored in a matrix $X \in \R^{200 \times 3}$, one row per student. Before training, the adjacency matrix is prepared in three steps.
 
-\subsection{Adding Self-Loops}
-\begin{equation}
-  \Ahat = A + I.
-\end{equation}
-Without self-loops, a node aggregating from its neighbours would lose its own features. Adding self-loops includes each node in its own neighbourhood, $\mathcal{N}(i) \leftarrow \mathcal{N}(i) \cup \{i\}$, and sets every diagonal entry $\Ahat_{ii} = 1$.
+\textbf{Step 1: add self-loops.} We compute $\Ahat = A + I$. Without this, a node that averages over its neighbours would ignore its \emph{own} features. Adding the identity matrix makes every node its own neighbour. (It also gives the one unconnected student something to average: itself.)
 
-\subsection{Degree Matrix of \texorpdfstring{$\hat{A}$}{A-hat}}
-\begin{equation}
-  \Dhat_{ii} = \sum_j \Ahat_{ij}, \qquad \Dhat_{ij} = 0 \;\; (i \neq j).
-\end{equation}
-The original degree $d_i = \sum_j A_{ij}$ counts only actual neighbours; the augmented degree $\hat{d}_i = d_i + 1$ includes the self-loop.
+\textbf{Step 2: count degrees.} The degree matrix $\Dhat$ is diagonal, with $\Dhat_{ii}$ equal to the number of neighbours of node $i$ (including itself).
 
-\subsection{Symmetric Normalization}
+\textbf{Step 3: normalize.}
 \begin{equation}
-  \Anorm = \Dhat^{-1/2} \, \Ahat \, \Dhat^{-1/2},
-  \qquad
-  \Anorm_{ij} = \frac{\Ahat_{ij}}{\sqrt{\hat{d}_i \, \hat{d}_j}}.
-  \label{eq:norm}
+  \Anorm = \Dhat^{-1/2}\,\Ahat\,\Dhat^{-1/2},
+  \qquad\text{so}\qquad
+  \Anorm_{ij} = \frac{1}{\sqrt{\hat d_i \, \hat d_j}} \ \text{ if $i$ and $j$ are connected.}
 \end{equation}
-Normalization is needed because:
+Without normalization, a student with many friends would add up many feature vectors and end up with much larger values than a student with few friends. Dividing by the degrees turns the sum into a balanced, weighted average, which keeps values on a similar scale for every node and across layers.
+
+\textbf{The GCN layer.} With $\Anorm$ prepared, one GCN layer is a single line of maths:
+\begin{equation}
+  H^{(l+1)} = \sigma\big(\,\Anorm\, H^{(l)}\, W^{(l)}\,\big).
+\end{equation}
+Reading it from left to right:
 \begin{itemize}
-  \item \textbf{Degree differences:} without it, high-degree nodes accumulate much larger aggregated values simply because they have more neighbours.
-  \item \textbf{Magnitude stability:} aggregated features stay on a comparable scale regardless of degree.
-  \item \textbf{Stability across layers:} feature magnitudes do not grow or shrink uncontrollably from layer to layer.
-  \item \textbf{Balance:} the symmetric form accounts for the degrees of both endpoints of each edge.
+  \item $\Anorm H^{(l)}$ is \textbf{aggregation}: each node's new vector is a weighted average of its own and its neighbours' current vectors ($H^{(0)} = X$).
+  \item Multiplying by $W^{(l)}$ is a \textbf{learned linear transformation}, the part that training adjusts.
+  \item $\sigma$ is the ReLU activation, which adds non-linearity. It is \emph{not} applied after the last layer, because the output must be raw class scores (\emph{logits}), which can be negative.
 \end{itemize}
-For an undirected graph $\Anorm = \Anorm^{\top}$, which we verify numerically.
 
-\subsection{GCN Layer Propagation Rule}
-Starting from $H^{(0)} = X$, each layer computes
-\begin{equation}
-  H^{(l+1)} = \sigma\!\left( \Anorm \, H^{(l)} \, W^{(l)} \right),
-  \label{eq:gcn}
-\end{equation}
-where $H^{(l)} \in \R^{N \times F_l}$ are the node representations at layer $l$, $W^{(l)} \in \R^{F_l \times F_{l+1}}$ is a learnable weight matrix, and $\sigma$ is the activation (ReLU for hidden layers). Dimensionally,
-\begin{equation}
-  \underbrace{\Anorm}_{N \times N} \, \underbrace{H^{(l)}}_{N \times F_l}
-  = \underbrace{\Anorm H^{(l)}}_{N \times F_l},
-  \qquad
-  \underbrace{\Anorm H^{(l)}}_{N \times F_l} \, \underbrace{W^{(l)}}_{F_l \times F_{l+1}}
-  = \underbrace{H^{(l+1)}}_{N \times F_{l+1}}.
-\end{equation}
-The product $\Anorm H^{(l)}$ is the \textbf{neighbourhood aggregation} step: each node's representation becomes a weighted average of its own and its neighbours' representations. Multiplying by $W^{(l)}$ is the \textbf{linear transformation} into a new feature space.
+\textbf{A tiny example.} Take four students connected in a ring, 0--1--2--3--0. After adding self-loops every node has 3 neighbours (two others and itself), so every non-zero entry of $\Anorm$ is $1/\sqrt{3 \cdot 3} = 1/3$. Student 0 is connected to students 1 and 3, so its new \emph{study hours} value is the average $(5 + 8 + 6)/3 = 6.33$ of itself and its neighbours. One multiplication by $\Anorm$ has blended each student with their study group. Stacking layers repeats this, so after $k$ layers a node is influenced by everyone up to $k$ steps away (its \emph{receptive field}).
 
-\subsection{Loss Function}
-We use cross-entropy over the training-node set $\mathcal{T}$:
-\begin{equation}
-  \mathcal{L} = -\sum_{i \in \mathcal{T}} \log P_{i, y_i},
-  \qquad P = \operatorname{softmax}\!\big(H^{(L)}\big).
-\end{equation}
-In practice the logits are passed directly to PyTorch's \texttt{nn.CrossEntropyLoss}, which applies \texttt{log\_softmax} internally for numerical stability.
+\textbf{Why this helps here.} A single student's features are ambiguous because the groups overlap. But their study group is mostly made up of students with the same result, so the \emph{average} over the group is a much more reliable signal than the student alone. This is the effect the experiments measure.
 
 % =====================================================================
-\section{Three-Layer Architecture}
+\section{The Model and How It Is Trained}
 
-The model maps 3 input features to 2 class logits through two hidden layers of width 8 (Figure~\ref{fig:arch}):
-\begin{align}
-  H^{(1)} &= \operatorname{ReLU}\!\big(\Anorm X W^{(0)}\big), & W^{(0)} &\in \R^{3 \times 8}, \\
-  H^{(2)} &= \operatorname{ReLU}\!\big(\Anorm H^{(1)} W^{(1)}\big), & W^{(1)} &\in \R^{8 \times 8}, \\
-  Z = H^{(3)} &= \Anorm H^{(2)} W^{(2)}, & W^{(2)} &\in \R^{8 \times 2}.
-\end{align}
+The main model has three GCN layers. The first maps the 3 input features to 8 hidden values, the second maps 8 to 8, and the third maps 8 values to 2 scores, one per class (Figure~\ref{fig:arch}). The layers have $3{\times}8 + 8{\times}8 + 8{\times}2 = 104$ weights in total.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[
-  box/.style={draw, rounded corners=3pt, minimum height=1.0cm, minimum width=1.9cm, align=center, font=\small, fill=blue!6},
-  act/.style={draw, rounded corners=3pt, minimum height=1.0cm, minimum width=1.2cm, align=center, font=\small, fill=orange!12},
-  io/.style={draw, rounded corners=3pt, minimum height=1.0cm, minimum width=1.5cm, align=center, font=\small, fill=black!5},
-  arr/.style={-{Stealth[length=2.2mm]}, thick},
-  node distance=0.45cm
+  box/.style={draw, rounded corners=3pt, minimum height=0.9cm, minimum width=1.75cm, align=center, font=\small, fill=blue!6},
+  act/.style={draw, rounded corners=3pt, minimum height=0.9cm, minimum width=1.0cm, align=center, font=\small, fill=orange!12},
+  io/.style={draw, rounded corners=3pt, minimum height=0.9cm, minimum width=1.4cm, align=center, font=\small, fill=black!5},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+  node distance=0.35cm
 ]
-  \node[io]  (x)  {$X$\\$24 \times 3$};
-  \node[box, right=of x]  (g1) {GCN layer 1\\$3 \to 8$};
+  \node[io]  (x)  {$X$\\$200 \times 3$};
+  \node[box, right=of x]  (g1) {GCN layer\\$3 \to 8$};
   \node[act, right=of g1] (r1) {ReLU};
-  \node[box, right=of r1] (g2) {GCN layer 2\\$8 \to 8$};
+  \node[box, right=of r1] (g2) {GCN layer\\$8 \to 8$};
   \node[act, right=of g2] (r2) {ReLU};
-  \node[box, right=of r2] (g3) {GCN layer 3\\$8 \to 2$};
-  \node[io, below=0.8cm of g3] (z) {Logits $Z$\\$24 \times 2$};
-  \node[io, left=of z] (p) {softmax\\argmax};
+  \node[box, right=of r2] (g3) {GCN layer\\$8 \to 2$};
+  \node[io, right=of g3] (z) {Scores\\$200 \times 2$};
   \draw[arr] (x) -- (g1);  \draw[arr] (g1) -- (r1); \draw[arr] (r1) -- (g2);
   \draw[arr] (g2) -- (r2); \draw[arr] (r2) -- (g3); \draw[arr] (g3) -- (z);
-  \draw[arr] (z) -- (p);
 \end{tikzpicture}
-\caption{Three-layer GCN. Every GCN layer computes $\Anorm H W$ with the same precomputed $\Anorm$.}
+\caption{The three-layer GCN. Every layer uses the same normalized adjacency $\Anorm$.}
 \label{fig:arch}
 \end{figure}
 
-\paragraph{Why no ReLU after the final layer?} The final layer produces \emph{logits}, raw class scores that may be negative. ReLU would clip negative scores to zero and destroy class-preference information. The softmax (applied implicitly by \texttt{CrossEntropyLoss}) converts logits to probabilities; applying softmax before the loss would be redundant and numerically unstable.
+\textbf{Training.} The model processes the whole graph at once and produces two scores for every student. Softmax turns the scores into probabilities, and the prediction is the class with the higher probability. The \textbf{cross-entropy loss} is computed only on the 120 training students, and the Adam optimizer (learning rate 0.01) updates the weights to reduce it. Two standard safeguards against overfitting are used:
+\begin{itemize}
+  \item \textbf{Dropout and weight decay.} During training, half of the hidden values are randomly set to zero at each step (dropout 0.5), and large weights are lightly penalized (weight decay $5\times10^{-4}$). Both stop the model from relying too heavily on any single pattern.
+  \item \textbf{Early stopping.} After every epoch the loss on the 40 validation students is checked. Training stops once it has not improved for 30 epochs, and the model is reset to the weights from its best epoch. This also removes the need to guess how many epochs to train for.
+\end{itemize}
 
-% =====================================================================
-\section{Dataset and Graph Construction}
+\textbf{Models compared.} All of them are trained in exactly the same way.
+\begin{itemize}
+  \item \textbf{MLP}: an ordinary two-layer neural network that sees only each student's own features and \emph{ignores the graph}. It shows how far the features alone can go.
+  \item \textbf{GCN-1, GCN-2, GCN-3}: GCNs with 1, 2 and 3 layers, to study the effect of depth.
+  \item \textbf{GCN-3 without regularization}: the same model with no dropout, no weight decay and no early stopping (a fixed 200 epochs), to check whether the safeguards matter.
+  \item \textbf{GCN-3 on a random graph}: the real study groups replaced by random connections (same number of edges). This tests whether the GCN relies on the graph being meaningful.
+\end{itemize}
 
-\subsection{Synthetic Data}
-
-\begin{table}[H]
-\centering
-\caption{Properties of the synthetic student graph (generated with seed 42).}
-\label{tab:graph}
-\begin{tabular}{@{}ll@{}}
-\toprule
-Property & Value \\
-\midrule
-Number of nodes & 24 \\
-Number of edges & 63 \\
-Number of classes & 2 (Fail = 0, Pass = 1) \\
-Features per node & 3 \\
-Class distribution & Fail: 10, Pass: 14 \\
-Graph density & 0.228 \\
-Average degree & 5.25 \\
-Min / max degree & 1 / 9 \\
-Diameter & 4 \\
-Directed & No \\
-Self-loops & No (before normalization) \\
-Connected & Yes \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Node Features}
-Each student has three features drawn from class-dependent normal distributions (Table~\ref{tab:features}) and clipped to realistic ranges.
-
-\begin{table}[H]
-\centering
-\caption{Feature distributions by class.}
-\label{tab:features}
-\begin{tabular}{@{}lll@{}}
-\toprule
-Feature & Pass students & Fail students \\
-\midrule
-\texttt{study\_hours}      & $\mu = 7,\ \sigma = 1.5$ & $\mu = 3,\ \sigma = 1.5$ \\
-\texttt{attendance}       & $\mu = 80,\ \sigma = 10$ & $\mu = 50,\ \sigma = 12$ \\
-\texttt{assignment\_score} & $\mu = 75,\ \sigma = 10$ & $\mu = 40,\ \sigma = 12$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Graph Generation}
-Edges are sampled independently for every pair of nodes, with probability $p_{\text{same}} = 0.35$ if both nodes share a label and $p_{\text{cross}} = 0.08$ otherwise. This produces meaningful but imperfect homophily. Figure~\ref{fig:graph} shows the result.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.72\textwidth]{fig1_graph_true_labels.png}
-\caption{The student graph coloured by true label (red = Fail, green = Pass).}
-\label{fig:graph}
-\end{figure}
-
-\subsection{Homophily Analysis}
-Edge homophily is the fraction of edges joining nodes of the same class:
-\begin{equation}
-  h = \frac{\big|\{(i,j) \in E : y_i = y_j\}\big|}{|E|} = \frac{50}{63} = 0.794.
-\end{equation}
-Of the 63 edges, 50 are same-label and 13 cross-label. A value of 0.794 indicates moderately strong homophily: passing students tend to connect to other passing students (e.g.\ study groups), but cross-class connections exist.
-
-\subsection{Feature Preprocessing}
-Features are standardized with training-set statistics only, to prevent data leakage:
-\begin{equation}
-  \bm{x}' = \frac{\bm{x} - \bm{\mu}_{\text{train}}}{\bm{\sigma}_{\text{train}}}.
-\end{equation}
-
-\subsection{Train/Validation/Test Split}
-
-\begin{table}[H]
-\centering
-\caption{Node split (seed 42). Every seed in the multi-seed experiments draws a different split of the same graph.}
-\label{tab:split}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-Split & Nodes & Percentage \\
-\midrule
-Training   & 14 & 58.3\% \\
-Validation & 4  & 16.7\% \\
-Test       & 6  & 25.0\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Transductive setting.} All edges between all 24 nodes are visible during training; only the \emph{labels} of validation and test nodes are hidden. The model can use the connections of unlabelled nodes during message passing.
-
-\paragraph{Limitation.} With only 6 test nodes per split, a single misclassification changes accuracy by 16.7 percentage points, so test metrics have high variance.
-
-% =====================================================================
-\section{Implementation}
-
-The implementation uses only PyTorch tensor operations; no graph library is used for the model or the normalization.
-
-\subsection{GCN Layer}
-\begin{lstlisting}
-class GCNLayer(nn.Module):
-    def __init__(self, in_features: int, out_features: int):
-        super().__init__()
-        # W: F_in x F_out -- learnable weight matrix (no bias)
-        self.weight = nn.Parameter(torch.empty(in_features, out_features))
-        nn.init.xavier_uniform_(self.weight)
-
-    def forward(self, A_norm, H):
-        support = torch.mm(A_norm, H)           # aggregation:    N x F_in
-        return torch.mm(support, self.weight)   # transformation: N x F_out
-\end{lstlisting}
-Xavier uniform initialization~\cite{glorot2010} samples weights from $U(-a, a)$ with $a = \sqrt{6/(F_{\text{in}} + F_{\text{out}})}$, keeping activation variance roughly constant across layers.
-
-\subsection{Multi-Layer GCN}
-\begin{lstlisting}
-class GCN(nn.Module):
-    def forward(self, A_norm, X):
-        H = X                                   # H^(0) = X
-        for i, layer in enumerate(self.layers):
-            H = layer(A_norm, H)                # H' = A_norm H W
-            if i < len(self.layers) - 1:
-                H = F.relu(H)                   # no ReLU on the final layer
-        return H                                # logits
-\end{lstlisting}
-
-\subsection{Normalization}
-\begin{lstlisting}
-def symmetric_normalization(A):
-    A_hat = A + np.eye(A.shape[0])                  # A_hat = A + I
-    D_hat = np.diag(A_hat.sum(axis=1))              # degree matrix
-    d = np.diag(D_hat)
-    inv_sqrt = np.where(d > 0, 1.0 / np.sqrt(d), 0.0)
-    D_inv_sqrt = np.diag(inv_sqrt)                  # D_hat^(-1/2)
-    return D_inv_sqrt @ A_hat @ D_inv_sqrt          # A_norm
-\end{lstlisting}
-Zero-degree nodes are handled safely by mapping their inverse square root to 0, although with self-loops every degree is at least 1.
-
-\subsection{Training}
-Models are trained full-batch with Adam~\cite{kingma2015} (learning rate 0.01) for 200 epochs. The loss is computed only on training nodes; validation loss and accuracy are logged every epoch but are not used for early stopping.
-
-% =====================================================================
-\section{Testing}
-
-The project includes 51 automated unit tests (\texttt{python -m pytest}); all pass. Table~\ref{tab:tests} lists the core checks.
-
-\begin{table}[H]
-\centering
-\caption{Core unit tests.}
-\label{tab:tests}
-\begin{tabular}{@{}lll@{}}
-\toprule
-\# & Test & Property verified \\
-\midrule
-1  & Graph symmetry        & $A = A^{\top}$ \\
-2  & Self-loops            & $\operatorname{diag}(\Ahat) = 1$ \\
-3  & Degree matrix         & $D_{ii} = \sum_j A_{ij}$, \ $D_{ij} = 0$ for $i \neq j$ \\
-4  & Normalized symmetry   & $\Anorm \approx \Anorm^{\top}$ \\
-5  & Dimensions            & $H^{(1)}: N\times 8$, \ $H^{(2)}: N\times 8$, \ $H^{(3)}: N\times 2$ \\
-6  & Forward pass          & Finite outputs, no NaN/Inf \\
-7  & Gradient flow         & All gradients non-\texttt{None} \\
-8  & Loss decreases        & Final loss $>20\%$ below initial loss \\
-9  & Probability validity  & $0 \le p_{ic} \le 1$, \ $\sum_c p_{ic} \approx 1$ \\
-10 & Reproducibility       & Same seed $\Rightarrow$ identical results \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Additional tests cover binary adjacency values, absence of initial self-loops, feature shapes, mask non-overlap and coverage, split ratios, per-seed splits over a fixed graph, zero-mean/unit-variance training features, graph statistics, normalized value ranges, parameter counts, a $2\times2$ confusion matrix even when only one class is present, homophily consistency, and smoke tests for the plotting functions.
-
-% =====================================================================
-\section{Experimental Setup}
-
-\begin{table}[H]
-\centering
-\caption{Experimental configuration.}
-\label{tab:setup}
-\begin{tabular}{@{}ll@{}}
-\toprule
-Setting & Value \\
-\midrule
-Python / PyTorch       & 3.14.3 / 2.13.0 \\
-NumPy / NetworkX       & 2.4.3 / 3.6.1 \\
-scikit-learn           & 1.9.0 \\
-Optimizer              & Adam, learning rate 0.01 \\
-Epochs                 & 200 (no early stopping) \\
-Hidden dimension       & 8 \\
-Loss                   & Cross-entropy on logits \\
-Random seeds           & 42--51 (10 seeds) \\
-What a seed controls   & Train/val/test split \emph{and} weight initialization \\
-Fixed across seeds     & Graph, features and labels (seed 42) \\
-Metrics                & Accuracy, precision, recall, F1, confusion matrix; train accuracy \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Four models are compared: an \textbf{MLP} baseline (Linear $3\to8$, ReLU, Linear $8\to2$) that ignores the graph, and GCNs with 1, 2 and 3 layers.
+\textbf{Fair evaluation.} Every experiment is repeated with \textbf{10 random seeds}. Each seed draws a \emph{new} train/validation/test split and new starting weights, and the results are reported as the mean and standard deviation over the 10 runs. With 40 test students per run, one mistake changes accuracy by 2.5 percentage points.
 
 % =====================================================================
 \section{Results}
 
-\subsection{Multi-Seed Results}
-
 \begin{table}[H]
 \centering
-\caption{Results over 10 seeds (mean $\pm$ standard deviation). Test metrics are computed on each seed's 6-node test set.}
+\caption{Accuracy over 10 seeds (mean $\pm$ standard deviation, 40 test students per seed).}
 \label{tab:results}
-\small
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lccccccr@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-Model & Train Acc & Test Acc & F1 & Precision & Recall & Params \\
+Model & Uses graph & Weights & Train accuracy & Test accuracy \\
 \midrule
-MLP   & $1.000 \pm 0.000$ & $\bm{1.000 \pm 0.000}$ & $1.000 \pm 0.000$ & $1.000 \pm 0.000$ & $1.000 \pm 0.000$ & 50 \\
-GCN-1 & $0.914 \pm 0.043$ & $0.983 \pm 0.050$ & $0.967 \pm 0.100$ & $1.000 \pm 0.000$ & $0.950 \pm 0.150$ & 6 \\
-GCN-2 & $0.993 \pm 0.021$ & $0.983 \pm 0.050$ & $0.967 \pm 0.100$ & $0.950 \pm 0.150$ & $1.000 \pm 0.000$ & 40 \\
-GCN-3 & $1.000 \pm 0.000$ & $0.883 \pm 0.107$ & $0.860 \pm 0.138$ & $0.867 \pm 0.176$ & $0.897 \pm 0.172$ & 104 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Individual Seed Results}
-
-\begin{table}[H]
-\centering
-\caption{Test accuracy per seed. Each column is a different split; accuracy moves in steps of $1/6 \approx 0.167$.}
-\label{tab:seeds}
-\small
-\setlength{\tabcolsep}{3.5pt}
-\begin{tabular}{@{}lcccccccccc@{}}
-\toprule
-Model & 42 & 43 & 44 & 45 & 46 & 47 & 48 & 49 & 50 & 51 \\
-\midrule
-MLP   & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 \\
-GCN-1 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 0.833 & 1.000 & 1.000 & 1.000 & 1.000 \\
-GCN-2 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 0.833 & 1.000 & 1.000 \\
-GCN-3 & 0.667 & 1.000 & 0.833 & 0.833 & 1.000 & 0.833 & 1.000 & 0.833 & 0.833 & 1.000 \\
+MLP                        & No  & 50  & $78.8\% \pm 2.7$ & $77.8\% \pm 5.2$ \\
+GCN-1                      & Yes & 6   & $90.9\% \pm 2.2$ & $90.5\% \pm 5.0$ \\
+GCN-2                      & Yes & 40  & $95.5\% \pm 1.9$ & $92.5\% \pm 4.3$ \\
+GCN-3                      & Yes & 104 & $95.7\% \pm 1.9$ & $\mathbf{94.0\% \pm 4.4}$ \\
+GCN-3, no regularization   & Yes & 104 & $96.3\% \pm 1.7$ & $94.3\% \pm 4.3$ \\
+GCN-3, random graph        & Random & 104 & --- & $50.8\% \pm 10.7$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[H]
 \centering
-\begin{subfigure}{0.49\textwidth}
+\begin{subfigure}{0.52\textwidth}
   \includegraphics[width=\linewidth]{fig8_model_comparison_accuracy.png}
-  \caption{Test accuracy}
+  \caption{Test accuracy of every model (10 seeds).}
 \end{subfigure}\hfill
-\begin{subfigure}{0.49\textwidth}
-  \includegraphics[width=\linewidth]{fig8b_model_comparison_f1.png}
-  \caption{Test F1 score}
-\end{subfigure}
-\caption{Model comparison over 10 seeds, including GCN-3 trained on a random graph. Error bars show one standard deviation.}
-\label{fig:comparison}
-\end{figure}
-
-\subsection{Main Model: 3-Layer GCN (Seed 42)}
-
-Figure~\ref{fig:curves} shows the training curves. Training loss falls to about $5\times10^{-4}$ and training accuracy reaches 100\%, while test accuracy for this split is 0.667 (Table~\ref{tab:cm}, Figure~\ref{fig:predicted}).
-
-\begin{figure}[H]
-\centering
-\begin{subfigure}{0.49\textwidth}
+\begin{subfigure}{0.46\textwidth}
   \includegraphics[width=\linewidth]{fig4_loss_curve.png}
-  \caption{Loss}
-\end{subfigure}\hfill
-\begin{subfigure}{0.49\textwidth}
-  \includegraphics[width=\linewidth]{fig5_accuracy_curve.png}
-  \caption{Accuracy}
+  \caption{GCN-3 loss (seed 42). Early stopping keeps the weights from epoch 112.}
 \end{subfigure}
-\caption{Training and validation curves for the 3-layer GCN (seed 42).}
-\label{fig:curves}
+\caption{Model comparison (left) and the training curve of the three-layer GCN (right). The training loss is noisier and higher than the validation loss because dropout is active only during training.}
+\label{fig:results}
 \end{figure}
 
-\begin{table}[H]
-\centering
-\caption{Confusion matrix, 3-layer GCN, seed 42, test set.}
-\label{tab:cm}
-\begin{tabular}{@{}lcc@{}}
-\toprule
- & Predicted Fail & Predicted Pass \\
-\midrule
-Actual Fail & 2 & 1 \\
-Actual Pass & 1 & 2 \\
-\bottomrule
-\end{tabular}
-\end{table}
+% =====================================================================
+\section{What the Results Mean}
+
+\textbf{1. The graph adds a lot.} The MLP, which sees each student in isolation, reaches only 77.8\%: with overlapping features, many students are genuinely ambiguous on their own. Every GCN does far better, by 13 to 16 percentage points, and GCN-3 beats the MLP on \emph{all 10} splits. The GCN resolves ambiguous students by looking at their study group: since 81\% of connections join students with the same result, the group's average points the right way even when the student's own features do not.
+
+\textbf{2. Depth helps a little.} Accuracy rises from one layer to three (90.5\% $\rightarrow$ 92.5\% $\rightarrow$ 94.0\%). A deeper model sees further (friends of friends) and can combine the information in more flexible ways. The steps between depths are, however, smaller than the variation between splits (about $\pm 4.5$ points), so this is a trend rather than a firm result. There is also no sign of \textbf{over-smoothing}, the problem in which repeated averaging makes all nodes look alike: with three layers on a graph of 200 nodes, nodes still keep distinct representations.
+
+\textbf{3. A meaningless graph is harmful.} When the real study groups are replaced by random connections, GCN-3 collapses to 50.8\%. That is worse than the MLP and worse even than always guessing ``Pass'' (55\%). In the random graph only about half of the edges join students with the same result, so averaging over neighbours mixes each student with unrelated students and destroys the information their own features carried. A GCN therefore helps only when connected nodes tend to be similar.
+
+\textbf{4. Regularization makes no measurable difference here.} GCN-3 with and without dropout, weight decay and early stopping scores 94.0\% and 94.3\%, and in both cases training accuracy is only slightly above test accuracy, so the model is not overfitting. With 120 labelled students and 104 weights there is enough data to learn from. Early stopping is still useful because it chooses the training length automatically: the 1-layer GCN, with only 6 weights, keeps improving for about 440 epochs, while the 3-layer GCN reaches its best after about 120.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.72\textwidth]{fig6_graph_predicted.png}
-\caption{Predicted labels of the 3-layer GCN (seed 42) on all nodes. A black X marks a misclassified node (nodes 7 and 10).}
+\includegraphics[width=0.56\textwidth]{fig6_graph_predicted.png}
+\caption{GCN-3 predictions on all 200 students (seed 42). A black X marks the 8 misclassified students. They sit where the Pass and Fail clusters meet, where a student's study group is itself mixed.}
 \label{fig:predicted}
 \end{figure}
 
-\subsection{Graph Ablation}
-
-For each seed, GCN-3 is retrained on an Erd\H{o}s--R\'enyi random graph with the same expected number of edges, using the same split as the corresponding original-graph run.
-
-\begin{table}[H]
-\centering
-\caption{Graph ablation over 10 seeds.}
-\label{tab:ablation}
-\begin{tabular}{@{}lccc@{}}
-\toprule
-Configuration & Graph homophily & Accuracy & F1 \\
-\midrule
-GCN-3, original graph & 0.794 & $0.883 \pm 0.107$ & $0.860 \pm 0.138$ \\
-GCN-3, random graph   & $0.494 \pm 0.065$ & $0.467 \pm 0.163$ & $0.535 \pm 0.157$ \\
-MLP, features only    & --- & $1.000 \pm 0.000$ & $1.000 \pm 0.000$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Adjacency and Embedding Visualizations}
-
-\begin{figure}[H]
-\centering
-\begin{subfigure}{0.49\textwidth}
-  \includegraphics[width=\linewidth]{fig2_adjacency_matrix.png}
-  \caption{Original adjacency $A$}
-\end{subfigure}\hfill
-\begin{subfigure}{0.49\textwidth}
-  \includegraphics[width=\linewidth]{fig3_normalized_adjacency.png}
-  \caption{Normalized adjacency $\Anorm$}
-\end{subfigure}
-\caption{Adjacency matrices before and after self-loops and symmetric normalization. The diagonal of $\Anorm$ is non-zero, and entries are smaller for high-degree node pairs.}
-\label{fig:adjacency}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\begin{subfigure}{0.49\textwidth}
-  \includegraphics[width=\linewidth]{fig9_pca_layer1.png}
-  \caption{Layer 1, $H^{(1)}$}
-\end{subfigure}\hfill
-\begin{subfigure}{0.49\textwidth}
-  \includegraphics[width=\linewidth]{fig10_pca_layer2.png}
-  \caption{Layer 2, $H^{(2)}$}
-\end{subfigure}
-\caption{PCA projections of the hidden node embeddings of the 3-layer GCN (seed 42), coloured by true label.}
-\label{fig:pca}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.45\textwidth]{fig7_confusion_matrix.png}
-\caption{Confusion matrix of the 3-layer GCN on the seed-42 test set.}
-\label{fig:cm}
-\end{figure}
-
-% =====================================================================
-\section{Mathematical Walkthrough: A 4-Node Example}
-
-Consider a 4-node cycle $0\!-\!1\!-\!2\!-\!3\!-\!0$ with three features per node.
-
-\paragraph{Step 1: adjacency and self-loops.}
-\begin{equation}
-A = \begin{bmatrix} 0&1&0&1\\ 1&0&1&0\\ 0&1&0&1\\ 1&0&1&0 \end{bmatrix},
-\qquad
-\Ahat = A + I = \begin{bmatrix} 1&1&0&1\\ 1&1&1&0\\ 0&1&1&1\\ 1&0&1&1 \end{bmatrix}.
-\end{equation}
-
-\paragraph{Step 2: degrees.} Every node has augmented degree 3:
-\begin{equation}
-\Dhat = \operatorname{diag}(3,3,3,3),
-\qquad
-\Dhat^{-1/2} = \operatorname{diag}(0.5774,\,0.5774,\,0.5774,\,0.5774).
-\end{equation}
-
-\paragraph{Step 3: normalized adjacency.} Each non-zero entry is $1/\sqrt{3 \cdot 3} = 1/3$:
-\begin{equation}
-\Anorm = \begin{bmatrix}
-0.3333 & 0.3333 & 0 & 0.3333\\
-0.3333 & 0.3333 & 0.3333 & 0\\
-0 & 0.3333 & 0.3333 & 0.3333\\
-0.3333 & 0 & 0.3333 & 0.3333
-\end{bmatrix}.
-\end{equation}
-
-\paragraph{Step 4: features and weights.} Columns of $X$ are study hours, attendance and assignment score; $W$ is a random $3 \times 2$ matrix (NumPy seed 0, scaled by 0.5):
-\begin{equation}
-X = \begin{bmatrix} 5&70&60\\ 8&90&85\\ 2&40&30\\ 6&75&65 \end{bmatrix},
-\qquad
-W = \begin{bmatrix} 0.8820 & 0.2001\\ 0.4894 & 1.1204\\ 0.9338 & -0.4886 \end{bmatrix}.
-\end{equation}
-
-\paragraph{Step 5: aggregation.} Each row of $\Anorm X$ averages a node with its two neighbours; for node 0, $(5+8+6)/3 = 6.333$:
-\begin{equation}
-\Anorm X = \begin{bmatrix}
-6.333 & 78.333 & 70.000\\
-5.000 & 66.667 & 58.333\\
-5.333 & 68.333 & 60.000\\
-4.333 & 61.667 & 51.667
-\end{bmatrix}.
-\end{equation}
-
-\paragraph{Step 6: transformation and activation.}
-\begin{equation}
-\Anorm X W = \begin{bmatrix}
-109.28 & 54.83\\
-91.51 & 47.19\\
-94.17 & 48.31\\
-82.25 & 44.71
-\end{bmatrix},
-\qquad
-H^{(1)} = \operatorname{ReLU}(\Anorm X W) = \Anorm X W,
-\end{equation}
-since every entry is already positive.
-
-\begin{table}[H]
-\centering
-\caption{Dimension summary for the 4-node example.}
-\begin{tabular}{@{}lc@{\hspace{2.5em}}lc@{}}
-\toprule
-Matrix & Size & Matrix & Size \\
-\midrule
-$A$, $I$, $\Ahat$, $\Dhat$, $\Dhat^{-1/2}$, $\Anorm$ & $4 \times 4$ & $W$ & $3 \times 2$ \\
-$X$ & $4 \times 3$ & $\Anorm X$ & $4 \times 3$ \\
- & & $\Anorm X W$, $H^{(1)}$ & $4 \times 2$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-% =====================================================================
-\section{Complexity Analysis}
-
-Let $N$ be the number of nodes, $E$ the number of edges, $F_l$ the feature width at layer $l$, $L$ the number of layers and $T$ the number of epochs.
-
-\subsection{Time Complexity}
-
-\begin{table}[H]
-\centering
-\caption{Per-layer cost.}
-\begin{tabular}{@{}lll@{}}
-\toprule
-Operation & Dense (this project) & Sparse \\
-\midrule
-Aggregation $\Anorm H$       & $O(N^2 F_l)$ & $O(E F_l)$ \\
-Transformation $HW$          & $O(N F_l F_{l+1})$ & $O(N F_l F_{l+1})$ \\
-\midrule
-One GCN layer                & $O(N^2 F_l + N F_l F_{l+1})$ & $O(E F_l + N F_l F_{l+1})$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent Training with sparse operations costs
-\begin{equation}
-  O\!\left( T \sum_{l=0}^{L-1} \big( E F_l + N F_l F_{l+1} \big) \right).
-\end{equation}
-For this project ($N = 24$, $E = 63$, $T = 200$): layer 1 costs $63 \cdot 3 + 24 \cdot 3 \cdot 8 = 765$, layer 2 costs $63 \cdot 8 + 24 \cdot 8 \cdot 8 = 2040$ and layer 3 costs $63 \cdot 8 + 24 \cdot 8 \cdot 2 = 888$ operations, about $3.7 \times 10^3$ per epoch and $7.4 \times 10^5$ in total.
-
-\subsection{Parameter Count}
-
-\begin{table}[H]
-\centering
-\caption{Parameters of the 3-layer GCN (no bias terms).}
-\begin{tabular}{@{}llr@{}}
-\toprule
-Layer & Weight & Count \\
-\midrule
-GCN layer 1 & $W^{(0)} \in \R^{3 \times 8}$ & 24 \\
-GCN layer 2 & $W^{(1)} \in \R^{8 \times 8}$ & 64 \\
-GCN layer 3 & $W^{(2)} \in \R^{8 \times 2}$ & 16 \\
-\midrule
-\textbf{Total} & & \textbf{104} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\noindent For comparison, GCN-1 has 6 parameters, GCN-2 has 40 and the MLP (which has bias terms) has 50.
-
-\subsection{Memory Complexity}
-A dense adjacency matrix needs $O(N^2)$ memory ($24^2 = 576$ entries here) versus $O(N + E)$ for a sparse one; the feature matrix needs $O(NF)$ and activations $O(N \sum_l F_l)$ in both cases. Dense storage is fine for this toy graph but infeasible for graphs with millions of nodes.
-
-\subsection{Graph Construction}
-Generating edges by testing every pair of nodes costs $O(N^2)$.
-
-% =====================================================================
-\section{Ablation Studies}
-
-\subsection{MLP versus GCN}
-The MLP baseline achieves perfect accuracy on all 10 splits, outperforming the 3-layer GCN ($0.883 \pm 0.107$). This is explained by:
-\begin{enumerate}
-  \item \textbf{Strong features.} Study hours, attendance and assignment scores have clearly different distributions for Pass and Fail students, so the task is solvable from features alone. The MLP therefore sets a ceiling that no model can beat on this dataset, which means this experiment \emph{cannot} show graph structure adding accuracy over features.
-  \item \textbf{Tiny test sets.} With 6 test nodes per split, small differences between models (one node $= 16.7$ points) are within noise.
-  \item \textbf{Overfitting in GCN-3} (Section~\ref{sec:depth}).
-\end{enumerate}
-The random-graph ablation shows that a \emph{misleading} structure hurts: with homophily $\approx 0.49$, neighbours are no more likely to share a label than chance, and GCN-3 falls to $0.467 \pm 0.163$. Because the MLP reaches 1.000 without any graph, the correct reading is that the real graph is \emph{compatible} with the labels while a random graph actively corrupts the features through aggregation, not that the real graph is necessary.
-
-\subsection{Layer Depth}
-\label{sec:depth}
-
-\begin{table}[H]
-\centering
-\caption{Effect of depth.}
-\label{tab:depth}
-\begin{tabular}{@{}lcccc@{}}
-\toprule
-Model & Receptive field & Params & Train Acc & Test Acc \\
-\midrule
-GCN-1 & 1 hop & 6   & 0.914 & $0.983 \pm 0.050$ \\
-GCN-2 & 2 hops & 40  & 0.993 & $0.983 \pm 0.050$ \\
-GCN-3 & 3 hops & 104 & 1.000 & $0.883 \pm 0.107$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{itemize}
-  \item \textbf{GCN-1} is a linear model of the 1-hop aggregated features. It does not fit every training node (0.914) yet reaches 0.983 on test nodes, so local information is already informative.
-  \item \textbf{GCN-2} fits the training nodes almost perfectly and matches GCN-1 on test nodes; two hops plus one hidden layer is enough capacity.
-  \item \textbf{GCN-3} fits every training node (final loss $\approx 10^{-3}$) but its test accuracy drops to 0.883, with the largest spread across splits.
-\end{itemize}
-
-\paragraph{Overfitting, not over-smoothing.} Over-smoothing~\cite{li2018} means repeated aggregation drives node representations together until classes become indistinguishable. If that were the cause, GCN-3 would also fail to separate the \emph{training} nodes, yet it separates them perfectly. A model that is perfect on training nodes and worse on held-out nodes is overfitting: GCN-3 fits 104 parameters to 14 labelled nodes, with no dropout, weight decay or early stopping, for 200 epochs regardless of validation performance. Three hops on a graph of diameter 4 also let each node draw on most of the graph, giving the model more ways to memorize the training labels.
-
-\paragraph{Caveat.} The differences between GCN-1, GCN-2 and GCN-3 amount to a handful of test nodes across 10 splits. They indicate a trend, not a statistically established effect.
-
-\subsection{Homophily}
-The real graph's homophily is 0.794, against $0.494 \pm 0.065$ for the random graphs. GCN-3 on the original graph (0.883) substantially outperforms GCN-3 on a random graph (0.467): the homophilic structure is compatible with the labels while a random structure is harmful. The features alone are nevertheless discriminative enough that the MLP needs no graph at all.
-
-% =====================================================================
-\section{Discussion}
-
-\subsection{What Worked}
-\begin{enumerate}
-  \item \textbf{All GCN variants learn the task.} Even GCN-1, with 6 parameters, reaches 98.3\% test accuracy.
-  \item \textbf{A meaningful graph beats a random one.} GCN-3 depends heavily on the graph being homophilic.
-  \item \textbf{One or two layers suffice.} GCN-1 and GCN-2 give the best GCN performance (0.983 each).
-  \item \textbf{Reproducibility.} The same seeds produce identical results across runs.
-\end{enumerate}
-
-\subsection{What Did Not Work as Expected}
-\begin{enumerate}
-  \item \textbf{GCN-3 performs worse than simpler models.} It reaches 100\% training accuracy but 88.3\% test accuracy: it overfits the 14 training nodes.
-  \item \textbf{The MLP matches or beats every GCN.} The synthetic features are highly discriminative, so graph structure is unnecessary for this dataset. This is an honest finding (graph structure is not always needed), and it means the dataset cannot demonstrate a GCN \emph{benefit} over features alone.
-\end{enumerate}
-
-\subsection{Why Graph Structure Matters}
-GCN performance depends on the graph being \emph{meaningful}. On the original graph (homophily 0.794) GCN-3 reaches 88.3\%; on a random graph of similar density (homophily 0.494) it reaches only 46.7\%, below the roughly 58\% a majority-class guess would achieve on a 14/10 class split. Aggregation over a random graph averages each student's features with those of unrelated students, corrupting the signal that the features carry.
-
-\subsection{Depth and Receptive Field}
-Each GCN layer extends the receptive field by one hop. Self-loops retain each node's own information, so earlier representations are not lost entirely. Deeper networks nevertheless face two distinct risks: \textbf{over-smoothing}, where representations become indistinguishable (which lowers training accuracy as well), and \textbf{overfitting}, where extra parameters and receptive field let the model memorize the training labels (training accuracy stays perfect while test accuracy falls). Comparing train and test accuracy separates the two; in this project the evidence points to overfitting.
+Figure~\ref{fig:predicted} shows where the remaining mistakes happen: on students at the boundary between the two clusters. Their neighbours are a mix of passing and failing students, so averaging over the group gives a weak signal, exactly the situation in which a GCN has the least to work with.
 
 % =====================================================================
 \section{Limitations}
 
-\begin{enumerate}
-  \item \textbf{Synthetic dataset.} Results cannot be generalized to real-world data.
-  \item \textbf{Tiny graph.} 24 nodes is far smaller than standard benchmarks (Cora: 2{,}708 nodes; PubMed: 19{,}717), so statistical significance is limited.
-  \item \textbf{Small test sets.} Six test nodes per split means one error changes accuracy by about 17 points; averaging over 10 splits reduces but does not remove this noise.
-  \item \textbf{Binary classification}, the simplest classification setting.
-  \item \textbf{Controlled graph construction.} Homophily and feature distributions are chosen parameters; other choices would give other results.
-  \item \textbf{Limited hyperparameter search.} A fixed learning rate (0.01) and 200 epochs were used without tuning.
-  \item \textbf{Transductive setting.} The model cannot classify nodes outside the training graph.
-  \item \textbf{Dense adjacency.} Dense operations do not scale to large graphs.
-  \item \textbf{No regularization or early stopping.} Validation accuracy is logged but not used to stop training or select a checkpoint; GCN-3's train/test gap shows this matters even for a 104-parameter model when only 14 nodes are labelled.
-  \item \textbf{Feature separability.} The MLP scores 100\%, so this dataset cannot demonstrate a benefit of graph structure over features alone.
-  \item \textbf{Fixed graph.} All seeds share one graph and one set of features; only the split and initialization vary.
-\end{enumerate}
+\begin{itemize}
+  \item \textbf{Synthetic data.} The homophily (81\%) and the amount of feature overlap are parameters I chose. The size of the GCN's advantage reflects those choices; on real data it could be smaller or larger.
+  \item \textbf{Small differences between depths.} With 40 test students per split, the gaps between GCN-1, GCN-2 and GCN-3 are within the noise of the experiment.
+  \item \textbf{Fixed graph.} All seeds share one graph and one set of features; only the split and the starting weights vary.
+  \item \textbf{Dense matrices.} The $200 \times 200$ adjacency matrix is stored in full. This is clear for learning but would not scale to graphs with millions of nodes, which need sparse matrices.
+\end{itemize}
+
+\textbf{Possible next steps:} test the same code on a real benchmark graph such as Cora; vary the homophily level to find the point at which the graph stops helping; and implement sparse matrix operations for larger graphs.
 
 % =====================================================================
 \section{Conclusion}
 
-This project implemented a three-layer Graph Convolutional Network from scratch, demonstrating the complete pipeline from graph construction to node classification. The key lessons are:
-\begin{enumerate}
-  \item \textbf{GCN mathematics are interpretable.} $\Anorm H W$ is neighbourhood aggregation followed by a linear transformation.
-  \item \textbf{Normalization is essential.} $\Dhat^{-1/2}\Ahat\Dhat^{-1/2}$ keeps aggregated features on a stable scale.
-  \item \textbf{Depth is a trade-off.} More layers widen the receptive field and add parameters; here the 3-layer GCN overfit the 14 labelled nodes. Comparing train and test accuracy distinguishes overfitting from over-smoothing.
-  \item \textbf{Graph structure can help or hurt.} A GCN depends on meaningful (homophilic) structure; a random graph cut GCN-3's accuracy from 88\% to 47\%. When features are already highly discriminative, even a good graph may add nothing over an MLP.
-  \item \textbf{Small experiments require caution.} Results on tiny datasets have high variance and do not support general claims about architectures.
-\end{enumerate}
+This project implemented a Graph Convolutional Network from first principles and showed what each step does: self-loops keep a node's own features, normalization keeps values balanced across nodes, and the layer rule $\Anorm H W$ is simply \emph{average over neighbours, then transform}. On a graph where features alone are ambiguous, the GCN raised accuracy from 78\% (features only) to 94\%, because a student's study group reveals what their own features cannot. The same model fell to 51\% on a random graph, showing that a GCN is only as good as the graph it is given: it helps when connected nodes tend to be alike, and hurts when they do not.
 
-% =====================================================================
-\section{Future Work}
+% ---------------------------------------------------------------------
+\vspace{6pt}
+\hrule
+\vspace{4pt}
+{\small
+\textbf{Reproducing the results.} From the repository root: \texttt{pip install -r requirements.txt}, then \texttt{python -m pytest} (55 unit tests checking the maths and code) and \texttt{python experiments/run\_experiments.py} (all results and figures).
 
-\begin{itemize}
-  \item \textbf{Real-world benchmarks:} evaluate on Cora, Citeseer or PubMed.
-  \item \textbf{Other architectures:} GraphSAGE~\cite{hamilton2017} for inductive learning, GAT~\cite{velickovic2018} for attention-based aggregation, and SGC~\cite{wu2019} as a simplified baseline.
-  \item \textbf{Regularization and early stopping:} use the validation split for early stopping and checkpoint selection, and add dropout or weight decay to close GCN-3's train/test gap; investigate DropEdge and PairNorm against over-smoothing in deeper models.
-  \item \textbf{Harder features:} increase class overlap so that the MLP no longer reaches 100\%, making it possible to measure whether the graph adds accuracy.
-  \item \textbf{Sparse operations:} PyTorch sparse tensors for scalability.
-  \item \textbf{Other tasks:} link prediction and graph classification.
-  \item \textbf{Heterogeneous graphs} with multiple node and edge types.
-\end{itemize}
-
-% =====================================================================
-\begin{thebibliography}{9}
-
-\bibitem{kipf2017}
-T.~N. Kipf and M.~Welling.
-\newblock Semi-supervised classification with graph convolutional networks.
-\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2017.
-\newblock arXiv:1609.02907.
-
-\bibitem{hamilton2017}
-W.~L. Hamilton, R.~Ying, and J.~Leskovec.
-\newblock Inductive representation learning on large graphs.
-\newblock In \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
-
-\bibitem{velickovic2018}
-P.~Veli\v{c}kovi\'{c}, G.~Cucurull, A.~Casanova, A.~Romero, P.~Li\`{o}, and Y.~Bengio.
-\newblock Graph attention networks.
-\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2018.
-
-\bibitem{wu2019}
-F.~Wu, A.~Souza, T.~Zhang, C.~Fifty, T.~Yu, and K.~Weinberger.
-\newblock Simplifying graph convolutional networks.
-\newblock In \emph{International Conference on Machine Learning (ICML)}, 2019.
-
-\bibitem{li2018}
-Q.~Li, Z.~Han, and X.-M. Wu.
-\newblock Deeper insights into graph convolutional networks for semi-supervised learning.
-\newblock In \emph{AAAI Conference on Artificial Intelligence}, 2018.
-
-\bibitem{glorot2010}
-X.~Glorot and Y.~Bengio.
-\newblock Understanding the difficulty of training deep feedforward neural networks.
-\newblock In \emph{International Conference on Artificial Intelligence and Statistics (AISTATS)}, 2010.
-
-\bibitem{kingma2015}
-D.~P. Kingma and J.~Ba.
-\newblock Adam: A method for stochastic optimization.
-\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2015.
-\newblock arXiv:1412.6980.
-
-\end{thebibliography}
-
-% =====================================================================
-\appendix
-\section{Numerical Considerations}
-
-\begin{enumerate}
-  \item \textbf{Zero-degree nodes.} With self-loops every node has degree $\ge 1$, so $\Dhat^{-1/2}$ never divides by zero; the implementation additionally maps zero degrees to 0 rather than producing NaN.
-  \item \textbf{Floating-point symmetry.} $\Anorm$ is verified to be symmetric to within $10^{-10}$.
-  \item \textbf{Softmax stability.} \texttt{CrossEntropyLoss} uses the log-sum-exp trick internally. Computing softmax and then its logarithm in two steps risks underflow, so the model returns raw logits $Z \in \R^{N \times C}$ and probabilities are obtained only for reporting, via \texttt{torch.softmax(logits, dim=1)}.
-\end{enumerate}
-
-\section{Reproducing the Results}
-
-From the repository root:
-\begin{lstlisting}[language=bash]
-pip install -r requirements.txt
-python -m pytest                       # 51 tests
-python experiments/run_experiments.py  # results, figures and metrics
-\end{lstlisting}
-Results are written to \texttt{experiments/results/} (\texttt{results.csv}, \texttt{metrics.json}) and figures to \texttt{figures/}. Source code: \url{https://github.com/Gowreesh1905/GCN_ML_with_graphs}.
+\textbf{Reference.} T.\,N. Kipf and M.~Welling, \emph{Semi-Supervised Classification with Graph Convolutional Networks}, ICLR 2017.
+}
 
 \end{document}

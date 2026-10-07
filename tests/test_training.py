@@ -4,6 +4,7 @@ test_training.py — Tests for Training and Reproducibility
 Tests:
 - Loss decreases during training (Test 8)
 - Reproducibility across identical seeds (Test 10)
+- Early stopping restores the best-validation weights
 """
 
 import numpy as np
@@ -163,3 +164,42 @@ class TestReproducibility:
         # Using a generous tolerance — just checking they're not identical
         assert history1["train_loss"][-1] != history2["train_loss"][-1], \
             "Different seeds produced identical results — suspicious!"
+
+
+class TestEarlyStopping:
+    """Early stopping on validation loss."""
+
+    def _train(self, dataset, **kwargs):
+        A_norm = normalize_adjacency_torch(dataset["adjacency"])
+        set_all_seeds(42)
+        model = GCN(n_features=3, n_hidden=8, n_classes=2, n_layers=3)
+        history = train_model(
+            model, A_norm, dataset["t_features"], dataset["t_labels"],
+            dataset["t_train_mask"], dataset["t_val_mask"],
+            lr=0.05, seed=42, verbose=False, **kwargs,
+        )
+        return model, A_norm, history
+
+    def test_stops_early_and_records_best_epoch(self, dataset):
+        """With a short patience on a long run, training ends before the limit."""
+        _, _, history = self._train(dataset, epochs=1000, patience=5)
+        n_run = len(history["train_loss"])
+        assert n_run < 1000, "Early stopping never triggered"
+        assert history["best_epoch"] == int(np.argmin(history["val_loss"]))
+        assert n_run - 1 - history["best_epoch"] == 5
+
+    def test_restores_best_weights(self, dataset):
+        """The returned model has the weights from the lowest-validation-loss epoch."""
+        model, A_norm, history = self._train(dataset, epochs=1000, patience=5)
+        model.eval()
+        with torch.no_grad():
+            logits = model(A_norm, dataset["t_features"])
+            val_loss = torch.nn.functional.cross_entropy(
+                logits[dataset["t_val_mask"]], dataset["t_labels"][dataset["t_val_mask"]]
+            ).item()
+        assert val_loss == pytest.approx(min(history["val_loss"]), abs=1e-6)
+
+    def test_no_patience_runs_all_epochs(self, dataset):
+        _, _, history = self._train(dataset, epochs=30)
+        assert len(history["train_loss"]) == 30
+        assert history["best_epoch"] == 29

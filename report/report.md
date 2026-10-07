@@ -4,7 +4,7 @@
 
 ## 1. Abstract
 
-This project investigates how graph structure and neighbourhood aggregation affect node classification using a Graph Convolutional Network (GCN). We implement a three-layer GCN from scratch using PyTorch, without relying on high-level graph neural network libraries, to classify students in a synthetic friendship/study-group graph as Pass or Fail. The project demonstrates the complete mathematical pipeline from adjacency matrix construction through symmetric normalization to multi-layer neighbourhood aggregation. Experimental evaluation across ten random seeds — each drawing a new train/validation/test split and a new weight initialization — compares the 3-layer GCN against an MLP baseline, 1-layer GCN, and 2-layer GCN. The feature-only MLP achieves perfect test accuracy and GCN-1/GCN-2 reach 98.3%, while the 3-layer GCN achieves 88.3% ± 10.7% despite fitting every training node; this train/test gap points to overfitting rather than over-smoothing. A graph-structure ablation study shows that a random graph (no homophily) degrades the 3-layer GCN to 46.7%, i.e. aggregation over a misleading graph hurts. All results are reproducible and honestly reported without overclaiming.
+This project investigates how graph structure and neighbourhood aggregation affect node classification using a Graph Convolutional Network (GCN). We implement a three-layer GCN from scratch using PyTorch, without relying on high-level graph neural network libraries, to classify 200 students in a synthetic study-group graph as Pass or Fail. The project demonstrates the complete mathematical pipeline from adjacency matrix construction through symmetric normalization to multi-layer neighbourhood aggregation. The students' features overlap strongly between classes, so a feature-only MLP reaches only 77.8% test accuracy. Across ten random seeds — each drawing a new train/validation/test split and a new weight initialization — GCNs with 1, 2 and 3 layers reach 90.5%, 92.5% and 94.0%, beating the MLP on every split. A graph-structure ablation shows that on a random graph (no homophily) the 3-layer GCN collapses to 50.8%, below the majority-class rate. All models use dropout, weight decay and early stopping; an unregularized 3-layer GCN performs the same (94.3%), showing no overfitting with 120 labelled nodes. All results are reproducible and honestly reported without overclaiming.
 
 ---
 
@@ -87,9 +87,9 @@ The GCN (Kipf & Welling, 2017) defines a layer-wise propagation rule that perfor
 
 ### 6.1 Adjacency Matrix
 
-For our graph with $N = 24$ nodes:
+For our graph with $N = 200$ nodes:
 
-$$A \in \mathbb{R}^{24 \times 24}, \quad A_{ij} \in \{0, 1\}, \quad A = A^T$$
+$$A \in \mathbb{R}^{200 \times 200}, \quad A_{ij} \in \{0, 1\}, \quad A = A^T$$
 
 ### 6.2 Adding Self-Loops
 
@@ -191,48 +191,50 @@ We generate a synthetic student-performance graph:
 
 | Property | Value |
 |---|---|
-| Number of nodes | 24 |
-| Number of edges | 63 |
+| Number of nodes | 200 |
+| Number of edges | 753 |
 | Number of classes | 2 (Fail=0, Pass=1) |
 | Features per node | 3 |
-| Class distribution | Fail: 10, Pass: 14 |
-| Graph density | 0.228 |
-| Average degree | 5.25 |
-| Min/Max degree | 1 / 9 |
+| Class distribution | Fail: 90, Pass: 110 |
+| Graph density | 0.038 |
+| Average degree | 7.53 |
+| Min/Max degree | 0 / 15 |
 | Directed | No |
 | Self-loops | No (before normalization) |
-| Connected | Yes |
+| Connected | No — one isolated student; the rest form one component (diameter 5) |
 
 ### 8.2 Node Features
 
-Each node (student) has three features:
+Each node (student) has three features drawn from class-dependent normal distributions. The class means are controlled by a `feature_gap` parameter: 1.0 gives well-separated reference means (Pass: 7 h / 80% / 75; Fail: 3 h / 50% / 40), and smaller values pull both classes toward the midpoint. We use **feature_gap = 0.25**:
 
-| Feature | Pass Students | Fail Students |
+| Feature | Pass students | Fail students |
 |---|---|---|
-| study_hours | μ=7, σ=1.5 | μ=3, σ=1.5 |
-| attendance | μ=80, σ=10 | μ=50, σ=12 |
-| assignment_score | μ=75, σ=10 | μ=40, σ=12 |
+| study_hours | μ=5.5, σ=1.5 | μ=4.5, σ=1.5 |
+| attendance | μ=68.75, σ=10 | μ=61.25, σ=12 |
+| assignment_score | μ=61.9, σ=10 | μ=53.1, σ=12 |
+
+The class means differ by less than one standard deviation, so the classes overlap strongly. This is deliberate: with well-separated features, a model that ignores the graph classifies every student correctly, leaving nothing for the graph to contribute (this happened in an earlier version of the project).
 
 ### 8.3 Graph Generation
 
-Edges are generated stochastically:
-- **Same-class probability:** $p_{\text{same}} = 0.35$
-- **Cross-class probability:** $p_{\text{cross}} = 0.08$
+Edges are generated stochastically for every pair of students:
+- **Same-class probability:** $p_{\text{same}} = 0.06$
+- **Cross-class probability:** $p_{\text{cross}} = 0.015$
 
-This creates meaningful but imperfect homophily.
+This creates meaningful but imperfect homophily with an average degree of about 7.5.
 
 ### 8.4 Homophily Analysis
 
-$$H = \frac{|\{(i,j) \in E : y_i = y_j\}|}{|E|} = \frac{50}{63} = 0.794$$
+$$H = \frac{|\{(i,j) \in E : y_i = y_j\}|}{|E|} = \frac{608}{753} = 0.807$$
 
 | Metric | Value |
 |---|---|
-| Total edges | 63 |
-| Same-label edges | 50 |
-| Cross-label edges | 13 |
-| Homophily ratio | 0.794 |
+| Total edges | 753 |
+| Same-label edges | 608 |
+| Cross-label edges | 145 |
+| Homophily ratio | 0.807 |
 
-A homophily ratio of 0.794 indicates moderately strong homophily: students who pass tend to be connected to other passing students (e.g., study groups), but some cross-class connections exist.
+A homophily ratio of 0.807 indicates strong homophily: students mostly connect with others who have the same result, but about one edge in five crosses between the classes.
 
 ### 8.5 Feature Preprocessing
 
@@ -246,15 +248,15 @@ The mean $\mu_{\text{train}}$ and standard deviation $\sigma_{\text{train}}$ are
 
 | Split | Nodes | Percentage |
 |---|---|---|
-| Training | 14 | 58% |
-| Validation | 4 | 17% |
-| Test | 6 | 25% |
+| Training | 120 | 60% |
+| Validation | 40 | 20% |
+| Test | 40 | 20% |
 
-**Transductive setting:** The entire graph structure (all edges between all 24 nodes) is visible during training. Only the *labels* of validation and test nodes are hidden. This is standard for node classification on a single graph. The model can leverage the graph connections of unlabelled nodes during message passing.
+The table shows the split for seed 42. In the multi-seed experiments (§11), every seed draws a **different** random split of the same graph.
 
-The table shows the split for seed 42. In the multi-seed experiments (§11), every seed draws a **different** random split of the same graph, so results are averaged over 10 different 6-node test sets rather than one.
+**Transductive setting:** The entire graph structure (all edges between all 200 nodes) is visible during training. Only the *labels* of validation and test nodes are hidden. This is standard for node classification on a single graph. The model can leverage the graph connections of unlabelled nodes during message passing.
 
-**Limitation:** With only 6 test nodes per split, a single misclassification changes accuracy by 16.7 percentage points; test metrics have very high variance and should not be over-interpreted.
+With 40 test nodes per split, one misclassification changes accuracy by 2.5 percentage points.
 
 ---
 
@@ -309,13 +311,29 @@ def symmetric_normalization(A):
     return A_norm
 ```
 
-Zero-degree nodes are handled safely by setting their inverse square root to 0.
+Zero-degree nodes are handled safely by setting their inverse square root to 0. (With self-loops every degree is at least 1 — including the one isolated student in our graph.)
+
+### 9.4 Training with Early Stopping
+
+Training is full-batch with Adam (learning rate 0.01, weight decay $5 \times 10^{-4}$) and dropout 0.5 on hidden layers. After every epoch the validation loss is computed; if it has not improved for 30 epochs, training stops and the weights from the best epoch are restored:
+
+```python
+if val_loss < best_val_loss:
+    best_val_loss, best_epoch = val_loss, epoch
+    best_state = copy.deepcopy(model.state_dict())
+elif epoch - best_epoch >= patience:
+    break                                   # no improvement for `patience` epochs
+...
+model.load_state_dict(best_state)           # keep the best-validation weights
+```
+
+Training runs for at most 500 epochs.
 
 ---
 
 ## 10. Testing
 
-All 51 tests passed (`python -m pytest`).
+All 55 tests passed (`python -m pytest`).
 
 | Test | Description | Status |
 |---|---|---|
@@ -330,7 +348,7 @@ All 51 tests passed (`python -m pytest`).
 | **Test 9** — Probability validity | $0 \leq p_i \leq 1$, $\sum_c p_{ic} \approx 1$ | ✅ Pass |
 | **Test 10** — Reproducibility | Same seed → same results | ✅ Pass |
 
-Additional tests verified: binary adjacency values, no initial self-loops, feature shapes, mask non-overlap, mask coverage, approximate split ratios, per-seed splits over a fixed graph, zero-mean/unit-std training features, graph statistics, normalized value ranges, positive diagonal entries, parameter counts, a 2 × 2 confusion matrix even when only one class is present, homophily consistency, and smoke tests for the graph and PCA plots.
+Additional tests verified: binary adjacency values, no initial self-loops, feature shapes, mask non-overlap, mask coverage, approximate split ratios, per-seed splits over a fixed graph, zero-mean/unit-std training features, graph statistics, normalized value ranges, positive diagonal entries, parameter counts, a 2 × 2 confusion matrix even when only one class is present, homophily consistency, the effect of `feature_gap`, early stopping (stops early, records and restores the best-validation weights), and smoke tests for the graph and PCA plots.
 
 ---
 
@@ -343,15 +361,17 @@ Additional tests verified: binary adjacency values, no initial self-loops, featu
 | NumPy | 2.4.3 |
 | NetworkX | 3.6.1 |
 | scikit-learn | 1.9.0 |
-| Optimizer | Adam |
-| Learning rate | 0.01 |
-| Epochs | 200 (no early stopping) |
+| Optimizer | Adam, learning rate 0.01, weight decay 5e-4 |
+| Dropout | 0.5 (hidden layers, all models) |
+| Early stopping | Validation loss, patience 30, at most 500 epochs, best weights restored |
 | Hidden dimensions | 8 |
 | Loss function | Cross-entropy (on logits) |
 | Random seeds | 42–51 (10 seeds) |
 | What a seed controls | Train/validation/test split **and** weight initialization |
 | Fixed across seeds | Graph, features and labels (generated with seed 42) |
 | Evaluation metrics | Accuracy, Precision, Recall, F1, Confusion Matrix; train accuracy reported alongside test accuracy |
+
+**Models:** MLP (features only), GCN-1, GCN-2, GCN-3, all trained with the settings above; **GCN-3 (no reg)**, the same architecture with no dropout, no weight decay and no early stopping (fixed 200 epochs); and **GCN-3 on a random graph** (§12.4).
 
 ---
 
@@ -361,49 +381,57 @@ Additional tests verified: binary adjacency values, no initial self-loops, featu
 
 | Model | Train Acc (mean ± std) | Test Acc (mean ± std) | F1 (mean ± std) | Precision (mean ± std) | Recall (mean ± std) | Parameters |
 |---|---|---|---|---|---|---|
-| MLP | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 | 1.000 ± 0.000 | 50 |
-| GCN-1 | 0.914 ± 0.043 | 0.983 ± 0.050 | 0.967 ± 0.100 | 1.000 ± 0.000 | 0.950 ± 0.150 | 6 |
-| GCN-2 | 0.993 ± 0.021 | 0.983 ± 0.050 | 0.967 ± 0.100 | 0.950 ± 0.150 | 1.000 ± 0.000 | 40 |
-| GCN-3 | 1.000 ± 0.000 | 0.883 ± 0.107 | 0.860 ± 0.138 | 0.867 ± 0.176 | 0.897 ± 0.172 | 104 |
+| MLP | 0.788 ± 0.027 | 0.778 ± 0.052 | 0.795 ± 0.076 | 0.773 ± 0.075 | 0.823 ± 0.101 | 50 |
+| GCN-1 | 0.909 ± 0.022 | 0.905 ± 0.050 | 0.902 ± 0.063 | 0.938 ± 0.054 | 0.872 ± 0.086 | 6 |
+| GCN-2 | 0.955 ± 0.019 | 0.925 ± 0.043 | 0.927 ± 0.051 | 0.923 ± 0.059 | 0.936 ± 0.077 | 40 |
+| GCN-3 | 0.957 ± 0.019 | 0.940 ± 0.044 | 0.942 ± 0.047 | 0.932 ± 0.062 | 0.954 ± 0.055 | 104 |
+| GCN-3 (no reg) | 0.963 ± 0.017 | 0.943 ± 0.043 | 0.946 ± 0.044 | 0.935 ± 0.067 | 0.962 ± 0.051 | 104 |
+
+Mean epoch of the kept weights (early stopping): MLP 124, GCN-1 441, GCN-2 249, GCN-3 123.
 
 ### 12.2 Individual Seed Results (Test Accuracy)
 
-Each column is a different train/validation/test split (and initialization). Every test set has 6 nodes, so accuracy moves in steps of 1/6 ≈ 0.167.
+Each column is a different train/validation/test split (and initialization). Every test set has 40 nodes, so accuracy moves in steps of 0.025.
 
 | Model | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | 50 | 51 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MLP | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
-| GCN-1 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.833 | 1.000 | 1.000 | 1.000 | 1.000 |
-| GCN-2 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.833 | 1.000 | 1.000 |
-| GCN-3 | 0.667 | 1.000 | 0.833 | 0.833 | 1.000 | 0.833 | 1.000 | 0.833 | 0.833 | 1.000 |
+| MLP | 0.775 | 0.750 | 0.750 | 0.850 | 0.875 | 0.750 | 0.700 | 0.825 | 0.750 | 0.750 |
+| GCN-1 | 0.950 | 0.825 | 0.950 | 0.900 | 0.975 | 0.950 | 0.875 | 0.925 | 0.850 | 0.850 |
+| GCN-2 | 0.975 | 0.850 | 0.900 | 0.950 | 1.000 | 0.925 | 0.925 | 0.900 | 0.950 | 0.875 |
+| GCN-3 | 0.925 | 0.900 | 0.950 | 0.950 | 1.000 | 0.950 | 0.875 | 0.975 | 1.000 | 0.875 |
+| GCN-3 (no reg) | 0.925 | 0.900 | 0.975 | 0.950 | 1.000 | 0.950 | 0.925 | 0.950 | 1.000 | 0.850 |
+
+Every GCN beats the MLP on every seed.
 
 ### 12.3 Confusion Matrix (3-Layer GCN, seed=42, test set)
 
 |  | Predicted Fail | Predicted Pass |
 |---|---|---|
-| **Actual Fail** | 2 | 1 |
-| **Actual Pass** | 1 | 2 |
+| **Actual Fail** | 10 | 3 |
+| **Actual Pass** | 0 | 27 |
+
+Test accuracy 0.925; training stopped after 142 epochs, keeping the weights from epoch 112.
 
 ### 12.4 Graph Ablation Study
 
-For each seed, GCN-3 is retrained on an Erdős–Rényi random graph with the same expected number of edges, using the same split as the original-graph run for that seed.
+For each seed, GCN-3 is retrained on an Erdős–Rényi random graph with the same expected number of edges, using the same split and training settings as the original-graph run for that seed.
 
 | Configuration | Graph homophily | Accuracy (mean ± std) | F1 (mean ± std) |
 |---|---|---|---|
-| GCN-3 (original graph) | 0.794 | 0.883 ± 0.107 | 0.860 ± 0.138 |
-| GCN-3 (random graph) | 0.494 ± 0.065 | 0.467 ± 0.163 | 0.535 ± 0.157 |
-| MLP (features only) | — | 1.000 ± 0.000 | 1.000 ± 0.000 |
+| GCN-3 (original graph) | 0.807 | 0.940 ± 0.044 | 0.942 ± 0.047 |
+| GCN-3 (random graph) | 0.498 ± 0.014 | 0.508 ± 0.107 | 0.594 ± 0.207 |
+| MLP (features only) | — | 0.778 ± 0.052 | 0.795 ± 0.076 |
 
 ### 12.5 Visualizations
 
 The following figures were generated and saved to the `figures/` directory:
 
-1. **fig1_graph_true_labels.png** — Original graph coloured by true class
+1. **fig1_graph_true_labels.png** — Graph coloured by true class
 2. **fig2_adjacency_matrix.png** — Adjacency matrix heatmap
 3. **fig3_normalized_adjacency.png** — Normalized adjacency matrix heatmap
-4. **fig4_loss_curve.png** — Training and validation loss curves
-5. **fig5_accuracy_curve.png** — Training and validation accuracy curves
-6. **fig6_graph_predicted.png** — Graph coloured by predicted class, with misclassified nodes marked by a black X (seed 42: nodes 7 and 10)
+4. **fig4_loss_curve.png** — Training and validation loss (the dotted line marks the epoch whose weights early stopping kept)
+5. **fig5_accuracy_curve.png** — Training and validation accuracy
+6. **fig6_graph_predicted.png** — Graph coloured by predicted class, misclassified nodes marked with a black X (seed 42: 8 of 200)
 7. **fig7_confusion_matrix.png** — Confusion matrix
 8. **fig8_model_comparison_accuracy.png** — Model comparison (accuracy, 10 seeds)
 9. **fig8b_model_comparison_f1.png** — Model comparison (F1, 10 seeds)
@@ -521,12 +549,12 @@ Let $N$ = nodes, $E$ = edges, $F_l$ = feature dimension at layer $l$, $L$ = laye
 
 $$O\left(T \sum_{l=0}^{L-1} (E F_l + N F_l F_{l+1})\right)$$
 
-For our project ($N=24$, $E=63$, $T=200$):
-- Layer 1: $O(63 \times 3 + 24 \times 3 \times 8) = O(189 + 576) = O(765)$
-- Layer 2: $O(63 \times 8 + 24 \times 8 \times 8) = O(504 + 1536) = O(2040)$
-- Layer 3: $O(63 \times 8 + 24 \times 8 \times 2) = O(504 + 384) = O(888)$ (aggregation happens on the 8-dimensional input, before the projection to 2)
-- Per epoch: $O(3693)$
-- Total: $O(200 \times 3693) \approx O(739{,}000)$
+For our project ($N=200$, $E=753$):
+- Layer 1: $O(753 \times 3 + 200 \times 3 \times 8) = O(2{,}259 + 4{,}800) = O(7{,}059)$
+- Layer 2: $O(753 \times 8 + 200 \times 8 \times 8) = O(6{,}024 + 12{,}800) = O(18{,}824)$
+- Layer 3: $O(753 \times 8 + 200 \times 8 \times 2) = O(6{,}024 + 3{,}200) = O(9{,}224)$ (aggregation happens on the 8-dimensional input, before the projection to 2)
+- Per epoch: $O(35{,}107)$
+- Total: early stopping ended seed-42 training after 142 epochs, so about $O(5 \times 10^6)$ operations
 
 ### 14.2 Parameter Count
 
@@ -547,7 +575,7 @@ No bias parameters are used in the GCN layers.
 | Feature matrix | $O(NF)$ | $O(NF)$ |
 | Activations (forward/backward) | $O(N \sum_l F_l)$ | $O(N \sum_l F_l)$ |
 
-For this toy project: $O(24^2) = O(576)$ for dense adjacency. For a real graph with millions of nodes, sparse representations are essential.
+For this toy project: $O(200^2) = O(40{,}000)$ entries for dense adjacency, of which only $2 \times 753 + 200 = 1{,}706$ are non-zero. For a real graph with millions of nodes, sparse representations are essential.
 
 ### 14.4 Adjacency Construction
 
@@ -559,35 +587,39 @@ Generating edges with the stochastic block model: $O(N^2)$ because every pair is
 
 ### 15.1 MLP vs GCN
 
-The MLP baseline achieves perfect accuracy (1.000 ± 0.000) on all 10 splits, outperforming the 3-layer GCN (0.883 ± 0.107). This result, while perhaps counterintuitive, is explained by:
+The MLP baseline reaches only 0.778 ± 0.052, while every GCN exceeds 0.90, and each GCN beats the MLP on every one of the 10 splits. The reason is the combination of overlapping features and a homophilic graph:
 
-1. **Strong features:** The synthetic features (study hours, attendance, assignment scores) have clearly different distributions for Pass vs Fail students, making the classification task solvable from features alone. The MLP therefore sets a ceiling that no model can beat on this dataset, which means this experiment **cannot** show graph structure adding accuracy over features.
-2. **Tiny test sets:** With only 6 test nodes per split, small differences between models (one node = 16.7 points) are within noise.
-3. **Overfitting in GCN-3:** GCN-3 fits all training nodes perfectly but loses accuracy on test nodes (see §15.2).
-
-The ablation study with a random graph shows that a *misleading* structure hurts: GCN-3 on a random graph (homophily ≈ 0.49, i.e. neighbours are no more likely to share a label than chance) achieves only 0.467 ± 0.163 accuracy, far below the same model on the original homophilic graph (0.883 ± 0.107). Because the MLP reaches 1.000 without any graph, the correct reading is that the real graph is *compatible* with the labels while a random graph actively corrupts the features through aggregation — not that the real graph is necessary.
+1. **Ambiguous features.** The class means differ by less than one standard deviation, so many students look like the other class when judged on their own features. The MLP cannot do better than the features allow.
+2. **Informative neighbourhoods.** 81% of edges join students with the same result. Aggregation $\tilde{A}H$ averages each student with their study group, and the group average is a far more reliable signal than the student alone.
 
 ### 15.2 Layer Depth Analysis
 
 | Model | Layers | Receptive Field | Parameters | Train Acc | Test Acc (mean ± std) |
 |---|---|---|---|---|---|
-| GCN-1 | 1 | 1-hop neighbours | 6 | 0.914 | 0.983 ± 0.050 |
-| GCN-2 | 2 | 2-hop neighbours | 40 | 0.993 | 0.983 ± 0.050 |
-| GCN-3 | 3 | 3-hop neighbours | 104 | 1.000 | 0.883 ± 0.107 |
+| GCN-1 | 1 | 1-hop neighbours | 6 | 0.909 | 0.905 ± 0.050 |
+| GCN-2 | 2 | 2-hop neighbours | 40 | 0.955 | 0.925 ± 0.043 |
+| GCN-3 | 3 | 3-hop neighbours | 104 | 0.957 | 0.940 ± 0.044 |
 
 **Observations:**
 
-- **GCN-1 (1 layer):** Each node aggregates from its immediate neighbours. With only 6 parameters and no hidden layer it is a linear model of the aggregated features; it does not even fit all training nodes (0.914), yet reaches 0.983 on test nodes, suggesting local information is already informative.
-- **GCN-2 (2 layers):** Fits the training nodes almost perfectly and matches GCN-1 on test nodes. Two hops of aggregation plus one hidden layer is enough capacity for this task.
-- **GCN-3 (3 layers):** Fits every training node (train accuracy 1.000, final training loss ≈ 0.001) but test accuracy drops to 0.883 with the largest spread across splits.
+- **GCN-1 (1 layer):** A linear model of the 1-hop aggregated features. Already 0.905: one round of averaging over the study group recovers most of the information the features lack.
+- **GCN-2 and GCN-3:** Each extra layer adds a hidden non-linearity and one more hop of context (friends of friends), and accuracy rises to 0.925 and 0.940.
+- **Caveat:** The steps between depths (1.5–2 points) are smaller than the standard deviation across splits (about 4.5 points), so the depth trend is suggestive, not statistically established.
 
-**Overfitting, not over-smoothing.** Over-smoothing means repeated aggregation makes node representations converge until classes become indistinguishable. If that were the cause here, GCN-3 would struggle to separate the *training* nodes too — but it separates them perfectly. A model that is perfect on training nodes and worse on held-out nodes is overfitting: GCN-3 has 104 parameters fitted to 14 labelled nodes, with no dropout, weight decay, or early stopping, and trains for 200 epochs regardless of validation performance. Three hops on this graph (diameter 4) also let each node draw on most of the graph, which gives the model more ways to memorize the training labels.
+**No over-smoothing.** Over-smoothing means repeated aggregation makes node representations converge until classes become indistinguishable. With three layers on a 200-node graph of average degree 7.5 there is no sign of it: GCN-3 has the highest training and test accuracy of the three depths.
 
-**Caveat:** Differences between GCN-1, GCN-2 and GCN-3 amount to a handful of test nodes across 10 splits. They indicate a trend, not a statistically established effect.
+### 15.3 Regularization
 
-### 15.3 Homophily
+| Model | Train Acc | Test Acc |
+|---|---|---|
+| GCN-3 (dropout, weight decay, early stopping) | 0.957 ± 0.019 | 0.940 ± 0.044 |
+| GCN-3 (none; fixed 200 epochs) | 0.963 ± 0.017 | 0.943 ± 0.043 |
 
-The graph homophily ratio is 0.794, compared with 0.494 ± 0.065 for the random graphs. GCN-3 on the original graph (0.883) substantially outperforms GCN-3 on a random graph (0.467), so the homophilic structure is compatible with the labels while a random structure is harmful. However, the features alone are already so discriminative that the MLP doesn't need graph structure at all.
+Regularization makes no measurable difference: with 120 labelled nodes and 104 parameters, the model does not overfit either way (training accuracy is only 1.5–2 points above test accuracy). Early stopping's practical benefit is choosing the training length automatically: the kept epoch ranges from about 120 (GCN-3) to about 440 (GCN-1, whose 6 parameters learn slowly), so no single fixed epoch count would suit every model.
+
+### 15.4 Homophily
+
+The original graph's homophily is 0.807; the random graphs' is 0.498 ± 0.014 — no label signal. On the random graph GCN-3 falls to 0.508 ± 0.107, below the MLP (0.778) and below the majority-class rate of 0.55. Aggregation over random neighbours averages each student with unrelated students, destroying the information in their own features. A GCN is only as good as its graph.
 
 ---
 
@@ -595,19 +627,19 @@ The graph homophily ratio is 0.794, compared with 0.494 ± 0.065 for the random 
 
 ### What Worked
 
-1. **All GCN variants learn the task.** Even GCN-1 (6 parameters) achieves 98.3% test accuracy.
-2. **A meaningful graph beats a random one.** The ablation study shows GCN-3 depends heavily on the graph being homophilic.
-3. **GCN-1 and GCN-2 achieve the best GCN performance** (0.983 each). One or two layers are enough for this graph size and structure.
-4. **Reproducibility is achieved.** Same seeds produce identical results across runs.
+1. **The graph adds a large, consistent gain.** GCNs improve on the feature-only MLP by 13–16 points, on every split.
+2. **A meaningful graph is essential.** The same GCN on a random graph is worse than ignoring the graph altogether.
+3. **Small models suffice.** GCN-1 reaches 90.5% with 6 parameters; GCN-3 reaches 94.0% with 104.
+4. **Reproducibility is achieved.** Same seeds produce identical results across runs, in the script and the notebook.
 
 ### What Did Not Work as Expected
 
-1. **GCN-3 performs worse than simpler models.** It reaches 100% training accuracy but 88.3% test accuracy: it overfits the 14 training nodes (see §15.2).
-2. **MLP matches or beats all GCN variants.** The synthetic features are highly discriminative, making graph structure unnecessary for this particular dataset. This is an honest finding — graph structure is not always needed — and it means this dataset cannot demonstrate a GCN *benefit* over features alone.
+1. **Regularization did not change results.** With 120 labelled nodes the 3-layer GCN does not overfit, so dropout, weight decay and early stopping have nothing to correct. (In an earlier version with only 14 labelled nodes, GCN-3 did overfit: 100% training accuracy but 88% test accuracy.)
+2. **Depth differences are within noise.** The 1 → 2 → 3 layer trend is consistent in direction but not large enough to be conclusive with 10 splits of 40 test nodes.
 
-### Why Graph Structure Matters
+### Where the Errors Are
 
-The ablation study demonstrates that GCN performance depends on the graph being *meaningful*. On the original graph (homophily 0.794), GCN-3 achieves 88.3% accuracy. On a random graph with similar density (homophily 0.494), only 46.7% — below the 58% a majority-class guess would get on a 14/10 class split. Aggregation over a random graph averages each student's features with those of unrelated students, corrupting the signal the features carry.
+In the seed-42 predictions (fig6), the 8 misclassified students sit where the Pass and Fail clusters meet. Their neighbourhoods are mixed, so aggregation gives a weak or misleading signal — exactly where homophily, and hence the GCN's advantage, breaks down.
 
 ### Depth and Receptive Field
 
@@ -616,23 +648,21 @@ Each GCN layer extends the receptive field by one hop:
 - 2 layers: each node "sees" nodes up to 2 hops away
 - 3 layers: each node "sees" nodes up to 3 hops away
 
-However, information from previous layers is retained through self-loops, so earlier representations are not completely lost. Deeper networks face two separate risks: **over-smoothing**, where information from many different nodes gets averaged together until representations become indistinguishable (this lowers training accuracy as well), and **overfitting**, where the extra parameters and receptive field let the model memorize the training labels (training accuracy stays perfect while test accuracy falls). In this project the evidence points to the second.
+Self-loops retain each node's own information at every layer. Deeper networks face two separate risks: **over-smoothing**, where repeated averaging makes representations indistinguishable (lowering training accuracy as well), and **overfitting**, where extra parameters let the model memorize the training labels (training accuracy stays high while test accuracy falls). Comparing train and test accuracy tells them apart; at three layers on this graph neither occurs.
 
 ---
 
 ## 17. Limitations
 
 1. **Synthetic dataset:** The graph and features are artificially generated. Results cannot be generalized to real-world datasets.
-2. **Tiny graph:** 24 nodes is far smaller than real graph datasets (Cora: 2708, PubMed: 19717). Statistical significance is limited.
-3. **Small test set:** Only 6 test nodes per split means a single misclassification changes accuracy by ~17 percentage points. Averaging over 10 different splits reduces, but does not remove, this noise.
-4. **Binary classification:** Two classes is the simplest possible classification task.
-5. **Synthetic graph construction:** The homophily level and feature distributions are controlled parameters. Different choices would yield different results.
-6. **Limited hyperparameter search:** We used a fixed learning rate (0.01) and 200 epochs without extensive tuning.
+2. **Chosen difficulty:** The homophily (0.81) and the feature overlap (`feature_gap = 0.25`) are parameters. The size of the GCN's advantage over the MLP reflects these choices.
+3. **Modest graph size:** 200 nodes is far smaller than real benchmarks (Cora: 2708, PubMed: 19717).
+4. **Test-set noise:** 40 test nodes per split means one misclassification changes accuracy by 2.5 points; the differences between GCN depths are within this noise.
+5. **Binary classification:** Two classes is the simplest possible classification task.
+6. **Limited hyperparameter search:** Learning rate, dropout, weight decay and patience were fixed, not tuned.
 7. **Transductive setting:** The model cannot generalize to unseen nodes not present in the original graph.
 8. **Dense adjacency:** We use dense matrix operations, which would not scale to large graphs.
-9. **No regularization or early stopping:** No dropout or weight decay is used, and validation accuracy is logged but not used to stop training or select a checkpoint. GCN-3's train/test gap shows this matters even for a 104-parameter model when only 14 nodes are labelled.
-10. **Feature separability:** The features alone are highly discriminative (the MLP scores 100%), so this dataset cannot demonstrate a benefit of graph structure over features alone.
-11. **Fixed graph:** All seeds share one graph and one set of features; only the split and initialization vary.
+9. **Fixed graph:** All seeds share one graph and one set of features; only the split and initialization vary.
 
 ---
 
@@ -642,23 +672,22 @@ This project implemented a three-layer Graph Convolutional Network from scratch,
 
 1. **GCN mathematics are interpretable:** The operation $\tilde{A} H W$ has a clear interpretation as neighbourhood aggregation followed by linear transformation.
 2. **Normalization is essential:** Symmetric normalization $\hat{D}^{-1/2} \hat{A} \hat{D}^{-1/2}$ prevents scale issues and is critical for stable training.
-3. **Depth is a trade-off:** More layers expand the receptive field and add parameters. Here the 3-layer GCN overfit the 14 labelled nodes; on larger or deeper settings, over-smoothing is a further risk. Comparing train and test accuracy is how to tell the two apart.
-4. **Graph structure can help or hurt:** A GCN depends on meaningful graph structure (homophily) — a random graph cut GCN-3's accuracy from 88% to 47% — but when features are already highly discriminative, even a good graph may not add value over an MLP.
-5. **Small experiments require caution:** Results on tiny datasets have high variance and should not be used to make general claims about model architectures.
+3. **Graphs help when features are ambiguous and neighbours are similar:** With overlapping features and homophily 0.81, aggregation lifted accuracy from 77.8% (MLP) to 94.0% (GCN-3).
+4. **A GCN is only as good as its graph:** On a random graph the same model fell to 50.8%, worse than ignoring the graph.
+5. **Check train vs test accuracy before blaming depth:** Comparing them distinguishes over-smoothing from overfitting; here three layers showed neither.
+6. **Small experiments require caution:** Differences of a couple of points between models are within the noise of 10 splits of 40 test nodes.
 
 ---
 
 ## 19. Future Work
 
 - **Real-world benchmarks:** Evaluate on Cora, Citeseer, or PubMed to test generalization.
+- **Homophily sweep:** Vary $p_{\text{same}}$ and $p_{\text{cross}}$ to find the homophily level at which the GCN stops beating the MLP.
+- **Fewer labels:** Reduce the training split to see when overfitting and regularization start to matter.
 - **Advanced GNN architectures:** Implement GraphSAGE (inductive learning) or GAT (attention-based aggregation).
 - **Sparse operations:** Use PyTorch sparse tensors for scalability.
-- **Link prediction:** Extend the task beyond node classification.
-- **Graph classification:** Apply graph-level pooling for whole-graph prediction.
-- **Inductive learning:** Design models that can generalize to unseen graphs.
-- **Heterogeneous graphs:** Handle multiple node and edge types.
-- **Regularization and early stopping:** Use the validation split for early stopping/checkpoint selection, and add dropout or weight decay to close GCN-3's train/test gap. Investigate DropEdge and PairNorm for over-smoothing in deeper models.
-- **Harder features:** Increase class overlap in the synthetic features so the MLP no longer reaches 100%, making it possible to measure whether the graph adds accuracy.
+- **Deeper models:** Test 4+ layers to observe over-smoothing, and mitigations such as DropEdge and PairNorm.
+- **Link prediction and graph classification:** Extend the task beyond node classification.
 
 ---
 

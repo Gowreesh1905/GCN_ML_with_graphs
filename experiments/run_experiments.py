@@ -5,7 +5,8 @@ Runs the full experimental pipeline:
 1. Generate synthetic graph and dataset
 2. Train 3-layer GCN (main model)
 3. Train MLP baseline
-4. Train 1-layer and 2-layer GCN for depth comparison
+4. Train 1-layer and 2-layer GCN for depth comparison, and a 3-layer GCN
+   without regularization (no dropout, weight decay or early stopping)
 5. Graph ablation (random graph)
 6. Multi-seed evaluation (10 seeds; each seed draws a new train/val/test
    split *and* a new weight initialization — the graph itself is fixed)
@@ -60,15 +61,25 @@ from src.visualization import (
 # ============================================================================
 SEEDS = list(range(42, 52))  # 10 seeds
 GRAPH_SEED = 42  # features, labels and graph are fixed across all seeds
-EPOCHS = 200
 LR = 0.01
-N_PASS = 14
-N_FAIL = 10
-P_SAME = 0.35
-P_CROSS = 0.08
+EPOCHS = 500          # upper limit; early stopping usually ends training sooner
+PATIENCE = 30         # stop after 30 epochs without a lower validation loss
+DROPOUT = 0.5
+WEIGHT_DECAY = 5e-4
+UNREG_EPOCHS = 200    # fixed training length for the unregularized GCN-3
+N_PASS = 110
+N_FAIL = 90
+P_SAME = 0.06
+P_CROSS = 0.015
+FEATURE_GAP = 0.25    # class means pulled together: features overlap strongly
 N_HIDDEN = 8
 N_FEATURES = 3
 N_CLASSES = 2
+
+# Training settings used for every model unless stated otherwise
+TRAIN_KWARGS = {"lr": LR, "epochs": EPOCHS, "patience": PATIENCE,
+                "weight_decay": WEIGHT_DECAY}
+UNREG_TRAIN_KWARGS = {"lr": LR, "epochs": UNREG_EPOCHS}
 
 FIGURES_DIR = os.path.join(project_root, "figures")
 RESULTS_DIR = os.path.join(project_root, "experiments", "results")
@@ -88,6 +99,7 @@ def build_seed_dataset(seed: int) -> dict:
     return build_dataset(
         n_pass=N_PASS, n_fail=N_FAIL,
         p_same=P_SAME, p_cross=P_CROSS,
+        feature_gap=FEATURE_GAP,
         seed=GRAPH_SEED, split_seed=seed,
     )
 
@@ -99,8 +111,7 @@ def run_single_experiment(
     data: dict,
     A_norm: torch.Tensor,
     seed: int,
-    epochs: int = EPOCHS,
-    lr: float = LR,
+    train_kwargs: dict = TRAIN_KWARGS,
 ) -> dict:
     """
     Train and evaluate a single model with a given seed.
@@ -113,7 +124,7 @@ def run_single_experiment(
     history = train_model(
         model, A_norm, data["t_features"], data["t_labels"],
         data["t_train_mask"], data["t_val_mask"],
-        lr=lr, epochs=epochs, seed=seed, verbose=False,
+        seed=seed, verbose=False, **train_kwargs,
     )
 
     test_metrics = evaluate_model(
@@ -214,8 +225,8 @@ def main():
     main_result = run_single_experiment(
         "GCN-3", GCN,
         {"n_features": N_FEATURES, "n_hidden": N_HIDDEN,
-         "n_classes": N_CLASSES, "n_layers": 3},
-        data, A_norm, seed=42, epochs=EPOCHS,
+         "n_classes": N_CLASSES, "n_layers": 3, "dropout": DROPOUT},
+        data, A_norm, seed=42,
     )
 
     print(f"\nTest Metrics (seed=42):")
@@ -223,6 +234,8 @@ def main():
         if k not in ("predictions", "probabilities", "y_true"):
             print(f"  {k}: {v}")
     print(f"  train accuracy: {main_result['train_metrics']['accuracy']}")
+    print(f"  stopped after {len(main_result['history']['train_loss'])} epochs; "
+          f"best validation loss at epoch {main_result['history']['best_epoch']}")
 
     # Training curves
     plot_training_curves(
@@ -283,20 +296,24 @@ def main():
 
     seed_data = {seed: build_seed_dataset(seed) for seed in SEEDS}
 
+    dims = {"n_features": N_FEATURES, "n_hidden": N_HIDDEN, "n_classes": N_CLASSES}
+    # name: (model class, model kwargs, training kwargs)
     model_configs = {
-        "MLP": (MLP, {"n_features": N_FEATURES, "n_hidden": N_HIDDEN, "n_classes": N_CLASSES}),
-        "GCN-1": (GCN, {"n_features": N_FEATURES, "n_hidden": N_HIDDEN, "n_classes": N_CLASSES, "n_layers": 1}),
-        "GCN-2": (GCN, {"n_features": N_FEATURES, "n_hidden": N_HIDDEN, "n_classes": N_CLASSES, "n_layers": 2}),
-        "GCN-3": (GCN, {"n_features": N_FEATURES, "n_hidden": N_HIDDEN, "n_classes": N_CLASSES, "n_layers": 3}),
+        "MLP": (MLP, {**dims, "dropout": DROPOUT}, TRAIN_KWARGS),
+        "GCN-1": (GCN, {**dims, "n_layers": 1, "dropout": DROPOUT}, TRAIN_KWARGS),
+        "GCN-2": (GCN, {**dims, "n_layers": 2, "dropout": DROPOUT}, TRAIN_KWARGS),
+        "GCN-3": (GCN, {**dims, "n_layers": 3, "dropout": DROPOUT}, TRAIN_KWARGS),
+        # Same architecture, but no dropout, no weight decay, no early stopping
+        "GCN-3 (no reg)": (GCN, {**dims, "n_layers": 3}, UNREG_TRAIN_KWARGS),
     }
 
     all_results = {}  # {model_name: {seed: result}}
-    for model_name, (model_class, model_kwargs) in model_configs.items():
+    for model_name, (model_class, model_kwargs, train_kwargs) in model_configs.items():
         all_results[model_name] = {}
         for seed in SEEDS:
             result = run_single_experiment(
                 model_name, model_class, model_kwargs,
-                seed_data[seed], A_norm, seed, EPOCHS,
+                seed_data[seed], A_norm, seed, train_kwargs,
             )
             all_results[model_name][seed] = result
 
@@ -309,6 +326,7 @@ def main():
         recs = [all_results[model_name][s]["test_metrics"]["recall"] for s in SEEDS]
         losses = [all_results[model_name][s]["history"]["train_loss"][-1] for s in SEEDS]
         train_accs = [all_results[model_name][s]["train_metrics"]["accuracy"] for s in SEEDS]
+        best_epochs = [all_results[model_name][s]["history"]["best_epoch"] for s in SEEDS]
 
         summary[model_name] = {
             "accuracy_mean": np.mean(accs),
@@ -325,15 +343,16 @@ def main():
             "individual_accuracies": accs,
             "individual_f1s": f1s,
             "n_params": all_results[model_name][SEEDS[0]]["n_params"],
+            "best_epoch_mean": np.mean(best_epochs),
         }
 
     # Print summary table
-    print(f"\n{'Model':<10} {'Train Acc (mean±std)':<25} {'Test Acc (mean±std)':<25} {'F1 (mean±std)':<25} {'Precision (mean±std)':<25} {'Recall (mean±std)':<25}")
+    print(f"\n{'Model':<16} {'Train Acc (mean±std)':<25} {'Test Acc (mean±std)':<25} {'F1 (mean±std)':<25} {'Precision (mean±std)':<25} {'Recall (mean±std)':<25}")
     print("-" * 135)
     for model_name in model_configs:
         s = summary[model_name]
         print(
-            f"{model_name:<10} "
+            f"{model_name:<16} "
             f"{s['train_accuracy_mean']:.4f} ± {s['train_accuracy_std']:.4f}       "
             f"{s['accuracy_mean']:.4f} ± {s['accuracy_std']:.4f}       "
             f"{s['f1_mean']:.4f} ± {s['f1_std']:.4f}       "
@@ -343,12 +362,12 @@ def main():
 
     # Print individual seed results
     print(f"\nIndividual Seed Results (Accuracy):")
-    print(f"{'Model':<10}", end="")
+    print(f"{'Model':<16}", end="")
     for s in SEEDS:
         print(f"  Seed {s}  ", end="")
     print()
     for model_name in model_configs:
-        print(f"{model_name:<10}", end="")
+        print(f"{model_name:<16}", end="")
         for s in SEEDS:
             acc = all_results[model_name][s]["test_metrics"]["accuracy"]
             print(f"  {acc:.4f}  ", end="")
@@ -357,7 +376,8 @@ def main():
     # Parameter counts
     print(f"\nParameter Counts:")
     for model_name in model_configs:
-        print(f"  {model_name}: {summary[model_name]['n_params']} parameters")
+        print(f"  {model_name}: {summary[model_name]['n_params']} parameters, "
+              f"best epoch (mean) {summary[model_name]['best_epoch_mean']:.0f}")
 
     # ==================================================================
     # 7. Graph Ablation Study
@@ -381,11 +401,11 @@ def main():
         # Train GCN-3 on random graph
         set_all_seeds(seed)
         model = GCN(n_features=N_FEATURES, n_hidden=N_HIDDEN,
-                     n_classes=N_CLASSES, n_layers=3)
+                     n_classes=N_CLASSES, n_layers=3, dropout=DROPOUT)
         history = train_model(
             model, random_A_norm, sd["t_features"], sd["t_labels"],
             sd["t_train_mask"], sd["t_val_mask"],
-            lr=LR, epochs=EPOCHS, seed=seed, verbose=False,
+            seed=seed, verbose=False, **TRAIN_KWARGS,
         )
         test_metrics = evaluate_model(
             model, random_A_norm, sd["t_features"],
@@ -418,7 +438,7 @@ def main():
     # Accuracy comparison
     acc_comparison = {}
     for model_name in model_configs:
-        acc_comparison[model_name] = {
+        acc_comparison[model_name.replace(" (", "\n(")] = {
             "mean": summary[model_name]["accuracy_mean"],
             "std": summary[model_name]["accuracy_std"],
         }
@@ -437,7 +457,7 @@ def main():
     # F1 comparison
     f1_comparison = {}
     for model_name in model_configs:
-        f1_comparison[model_name] = {
+        f1_comparison[model_name.replace(" (", "\n(")] = {
             "mean": summary[model_name]["f1_mean"],
             "std": summary[model_name]["f1_std"],
         }
@@ -489,7 +509,12 @@ def main():
             "seeds": SEEDS,
             "graph_seed": GRAPH_SEED,
             "seed_controls": "train/val/test split and weight initialization",
-            "epochs": EPOCHS,
+            "max_epochs": EPOCHS,
+            "patience": PATIENCE,
+            "dropout": DROPOUT,
+            "weight_decay": WEIGHT_DECAY,
+            "unregularized_epochs": UNREG_EPOCHS,
+            "feature_gap": FEATURE_GAP,
             "lr": LR,
             "n_hidden": N_HIDDEN,
             "n_pass": N_PASS,
@@ -525,6 +550,7 @@ def main():
             "individual_accuracies": [float(a) for a in s["individual_accuracies"]],
             "individual_f1s": [float(f) for f in s["individual_f1s"]],
             "n_params": int(s["n_params"]),
+            "best_epoch_mean": float(s["best_epoch_mean"]),
         }
 
     json_path = os.path.join(RESULTS_DIR, "metrics.json")
