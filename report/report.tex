@@ -37,8 +37,8 @@
 % ---------------------------------------------------------------------
 \begin{center}
   {\LARGE\bfseries Node Classification with a\\[2pt] Three-Layer Graph Convolutional Network}\\[8pt]
-  % TODO: replace with your name, register number and course
-  {\large Your Name \quad\textbar\quad Machine Learning with Graphs}\\[2pt]
+  % TODO: replace with the team members' names (and register numbers)
+  {\large Member 1, Member 2, Member 3 \quad\textbar\quad Machine Learning with Graphs}\\[2pt]
   {\small Code: \url{https://github.com/Gowreesh1905/GCN_ML_with_graphs}}
 \end{center}
 \vspace{4pt}
@@ -48,7 +48,7 @@
 
 Many datasets are naturally \emph{graphs}: people connected by friendships, papers connected by citations, students connected by study groups. In such data, a node's connections often say something about the node itself. An ordinary neural network looks at each example on its own and ignores these connections. A \textbf{Graph Convolutional Network (GCN)} is designed to use them: each node updates its representation by combining its own features with those of its neighbours.
 
-In this project I built a three-layer GCN \textbf{from scratch in PyTorch}, using only matrix operations (no graph library such as PyTorch Geometric), so that every mathematical step is visible in the code. The model solves a \textbf{node classification} task: given a graph of 200 students in which only some students' results are known, predict whether each remaining student will \emph{Pass} or \emph{Fail}.
+In this project we built a three-layer GCN \textbf{from scratch in PyTorch}, using only matrix operations (no graph library such as PyTorch Geometric), so that every mathematical step is visible in the code. The model solves a \textbf{node classification} task: given a graph of 200 students in which only some students' results are known, predict whether each remaining student will \emph{Pass} or \emph{Fail}.
 
 The project then asks three questions:
 \begin{enumerate}
@@ -210,7 +210,7 @@ Figure~\ref{fig:predicted} shows where the remaining mistakes happen: on student
 \section{Limitations}
 
 \begin{itemize}
-  \item \textbf{Synthetic data.} The homophily (81\%) and the amount of feature overlap are parameters I chose. The size of the GCN's advantage reflects those choices; on real data it could be smaller or larger.
+  \item \textbf{Synthetic data.} The homophily (81\%) and the amount of feature overlap are parameters we chose. The size of the GCN's advantage reflects those choices; on real data it could be smaller or larger.
   \item \textbf{Small differences between depths.} With 40 test students per split, the gaps between GCN-1, GCN-2 and GCN-3 are within the noise of the experiment.
   \item \textbf{Fixed graph.} All seeds share one graph and one set of features; only the split and the starting weights vary.
   \item \textbf{Dense matrices.} The $200 \times 200$ adjacency matrix is stored in full. This is clear for learning but would not scale to graphs with millions of nodes, which need sparse matrices.
