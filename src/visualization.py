@@ -296,7 +296,7 @@ def plot_model_comparison(
     means = [results[m]["mean"] for m in model_names]
     stds = [results[m].get("std", 0) for m in model_names]
 
-    colors = ["#E74C3C", "#3498DB", "#F39C12", "#2ECC71", "#9B59B6", "#7F8C8D"]
+    colors = ["#E74C3C", "#3498DB", "#F39C12", "#2ECC71", "#9B59B6", "#7F8C8D", "#34495E"]
     while len(colors) < len(model_names):
         colors.extend(colors)
 
@@ -379,5 +379,86 @@ def plot_pca_embeddings(
     ax.set_title(title, fontsize=14, fontweight="bold")
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
+
+    _finish(fig, save_path)
+
+
+# Validated categorical palette for the sweep chart (fixed order, never cycled)
+SWEEP_STYLES = {
+    "MLP":            {"color": "#2a78d6", "marker": "o", "label": "MLP (features only)"},
+    "Neighbour vote": {"color": "#eb6834", "marker": "s", "label": "Neighbour vote (graph only)"},
+    "GCN-1":          {"color": "#1baf7a", "marker": "^", "label": "GCN-1"},
+    "GCN-3":          {"color": "#eda100", "marker": "D", "label": "GCN-3"},
+}
+
+
+def plot_homophily_sweep(
+    sweep: Dict[str, List],
+    majority_rate: Optional[float] = None,
+    save_path: Optional[str] = None,
+    figsize: Tuple[int, int] = (10, 6),
+) -> None:
+    """
+    Test accuracy against graph homophily for each method.
+
+    Parameters
+    ----------
+    sweep : dict
+        "homophily": list of realised homophily values (one per level), and
+        for each method in SWEEP_STYLES a list (one per level) of per-seed
+        accuracies.
+    majority_rate : float or None
+        Accuracy of always predicting the majority class; drawn as a
+        dashed reference line.
+    """
+    ink, muted = "#333333", "#777777"
+    h = np.array(sweep["homophily"])
+    order = np.argsort(h)
+    h = h[order]
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    if majority_rate is not None:
+        ax.axhline(majority_rate, color=muted, linestyle="--", linewidth=1.2, zorder=1)
+        ax.text(h[-1], majority_rate + 0.01, f"Always guess the majority class ({majority_rate:.0%})",
+                color=muted, fontsize=9, ha="right", va="bottom")
+
+    end_points = []
+    for method, style in SWEEP_STYLES.items():
+        if method not in sweep:
+            continue
+        accs = [np.asarray(a) for a in sweep[method]]
+        mean = np.array([a.mean() for a in accs])[order]
+        std = np.array([a.std() for a in accs])[order]
+        ax.fill_between(h, mean - std, mean + std, color=style["color"], alpha=0.10,
+                        linewidth=0, zorder=2)
+        ax.plot(h, mean, color=style["color"], linewidth=2, marker=style["marker"],
+                markersize=8, markeredgecolor="white", markeredgewidth=1.5,
+                label=style["label"], zorder=3)
+        end_points.append([mean[-1], style["label"]])
+
+    # Direct labels at the right-hand end, nudged apart so they don't collide
+    end_points.sort(key=lambda e: e[0])
+    min_gap, y_top = 0.035, 1.0
+    for i in range(1, len(end_points)):          # push up to clear the label below
+        end_points[i][0] = max(end_points[i][0], end_points[i - 1][0] + min_gap)
+    end_points[-1][0] = min(end_points[-1][0], y_top)
+    for i in range(len(end_points) - 2, -1, -1):  # then keep everything under the top
+        end_points[i][0] = min(end_points[i][0], end_points[i + 1][0] - min_gap)
+    x_label = h[-1] + 0.012
+    for y, text in end_points:
+        ax.text(x_label, y, text, color=ink, fontsize=9.5, va="center")
+
+    ax.set_xlim(h[0] - 0.02, h[-1] + 0.17)
+    ax.set_ylim(0.3, 1.02)
+    ax.set_xticks(np.round(h, 2))
+    ax.set_xlabel("Homophily (share of edges joining students with the same result)", fontsize=11, color=ink)
+    ax.set_ylabel("Test accuracy", fontsize=11, color=ink)
+    ax.set_title("Test Accuracy vs Graph Homophily (10 seeds, ±1 std)", fontsize=14,
+                 fontweight="bold", color=ink)
+    ax.grid(True, alpha=0.25)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.legend(loc="lower right", fontsize=10, frameon=False)
 
     _finish(fig, save_path)

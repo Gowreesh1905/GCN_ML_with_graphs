@@ -7,7 +7,10 @@ Runs the full experimental pipeline:
 3. Train MLP baseline
 4. Train 1-layer and 2-layer GCN for depth comparison, and a 3-layer GCN
    without regularization (no dropout, weight decay or early stopping)
-5. Graph ablation (random graph)
+5. Graph ablation (random graph) and a graph-only baseline (neighbour
+   majority vote over training labels)
+5b. Homophily sweep: graphs with the same expected number of edges but
+   homophily from 0.9 down to 0.5
 6. Multi-seed evaluation (10 seeds; each seed draws a new train/val/test
    split *and* a new weight initialization — the graph itself is fixed)
 7. Generate all figures
@@ -46,6 +49,7 @@ from src.normalization import (
 from src.gcn import GCN, MLP
 from src.train import train_model
 from src.evaluate import evaluate_model, compute_homophily
+from src.baselines import evaluate_neighbour_vote
 from src.visualization import (
     plot_graph,
     plot_adjacency_heatmap,
@@ -53,6 +57,7 @@ from src.visualization import (
     plot_confusion_matrix,
     plot_model_comparison,
     plot_pca_embeddings,
+    plot_homophily_sweep,
 )
 
 
@@ -72,6 +77,7 @@ N_FAIL = 90
 P_SAME = 0.06
 P_CROSS = 0.015
 FEATURE_GAP = 0.25    # class means pulled together: features overlap strongly
+HOMOPHILY_LEVELS = [0.9, 0.8, 0.7, 0.6, 0.5]   # target homophily for the sweep
 N_HIDDEN = 8
 N_FEATURES = 3
 N_CLASSES = 2
@@ -102,6 +108,18 @@ def build_seed_dataset(seed: int) -> dict:
         feature_gap=FEATURE_GAP,
         seed=GRAPH_SEED, split_seed=seed,
     )
+
+
+def edge_probabilities(target_homophily: float) -> tuple:
+    """
+    (p_same, p_cross) giving the requested expected homophily while keeping
+    the expected number of edges equal to the main graph's.
+    """
+    same_pairs = N_PASS * (N_PASS - 1) / 2 + N_FAIL * (N_FAIL - 1) / 2
+    cross_pairs = N_PASS * N_FAIL
+    expected_edges = P_SAME * same_pairs + P_CROSS * cross_pairs
+    return (target_homophily * expected_edges / same_pairs,
+            (1 - target_homophily) * expected_edges / cross_pairs)
 
 
 def run_single_experiment(
@@ -379,6 +397,18 @@ def main():
         print(f"  {model_name}: {summary[model_name]['n_params']} parameters, "
               f"best epoch (mean) {summary[model_name]['best_epoch_mean']:.0f}")
 
+    # Graph-only baseline: majority vote over each node's labelled neighbours
+    vote_results = {
+        seed: evaluate_neighbour_vote(sd["adjacency"], sd["labels"],
+                                      sd["train_mask"], sd["test_mask"])
+        for seed, sd in seed_data.items()
+    }
+    vote_accs = [vote_results[s]["accuracy"] for s in SEEDS]
+    vote_f1s = [vote_results[s]["f1"] for s in SEEDS]
+    print(f"\nNeighbour majority vote (graph + training labels only, no features):")
+    print(f"  Accuracy: {np.mean(vote_accs):.4f} ± {np.std(vote_accs):.4f}")
+    print(f"  F1:       {np.mean(vote_f1s):.4f} ± {np.std(vote_f1s):.4f}")
+
     # ==================================================================
     # 7. Graph Ablation Study
     # ==================================================================
@@ -431,6 +461,51 @@ def main():
     print(f"  F1:       {summary['GCN-3']['f1_mean']:.4f} ± {summary['GCN-3']['f1_std']:.4f}")
 
     # ==================================================================
+    # 7b. Homophily Sweep
+    # ==================================================================
+    print_section("7b. Homophily Sweep")
+    print("Same students, features, splits and expected number of edges;")
+    print("only the share of edges joining same-result students changes.\n")
+
+    sweep_models = {
+        "GCN-1": {**dims, "n_layers": 1, "dropout": DROPOUT},
+        "GCN-3": {**dims, "n_layers": 3, "dropout": DROPOUT},
+    }
+    sweep = {"homophily": [], "MLP": [], "Neighbour vote": [],
+             "GCN-1": [], "GCN-3": []}
+    for target in HOMOPHILY_LEVELS:
+        p_same, p_cross = edge_probabilities(target)
+        level = {k: [] for k in ("Neighbour vote", "GCN-1", "GCN-3")}
+        realised = []
+        for seed in SEEDS:
+            sd = build_dataset(
+                n_pass=N_PASS, n_fail=N_FAIL, p_same=p_same, p_cross=p_cross,
+                feature_gap=FEATURE_GAP, seed=GRAPH_SEED, split_seed=seed,
+            )
+            realised.append(sd["stats"]["homophily_ratio"])
+            sd_A_norm = normalize_adjacency_torch(sd["adjacency"])
+            level["Neighbour vote"].append(evaluate_neighbour_vote(
+                sd["adjacency"], sd["labels"], sd["train_mask"], sd["test_mask"]
+            )["accuracy"])
+            for name, kwargs in sweep_models.items():
+                r = run_single_experiment(name, GCN, kwargs, sd, sd_A_norm, seed)
+                level[name].append(r["test_metrics"]["accuracy"])
+
+        sweep["homophily"].append(float(np.mean(realised)))
+        # The MLP ignores the graph, so its results are the main experiment's
+        sweep["MLP"].append(summary["MLP"]["individual_accuracies"])
+        for k, v in level.items():
+            sweep[k].append(v)
+        print(f"homophily {np.mean(realised):.3f} (p_same={p_same:.4f}, p_cross={p_cross:.4f}): "
+              + "  ".join(f"{k} {np.mean(v):.3f}" for k, v in level.items()))
+
+    plot_homophily_sweep(
+        sweep,
+        majority_rate=N_PASS / (N_PASS + N_FAIL),
+        save_path=os.path.join(FIGURES_DIR, "fig11_homophily_sweep.png"),
+    )
+
+    # ==================================================================
     # 8. Model Comparison Figure
     # ==================================================================
     print_section("8. Model Comparison Figure")
@@ -445,6 +520,10 @@ def main():
     acc_comparison["GCN-3\n(Random)"] = {
         "mean": np.mean(ablation_accs),
         "std": np.std(ablation_accs),
+    }
+    acc_comparison["Neighbour\nvote"] = {
+        "mean": np.mean(vote_accs),
+        "std": np.std(vote_accs),
     }
 
     plot_model_comparison(
@@ -464,6 +543,10 @@ def main():
     f1_comparison["GCN-3\n(Random)"] = {
         "mean": np.mean(ablation_f1s),
         "std": np.std(ablation_f1s),
+    }
+    f1_comparison["Neighbour\nvote"] = {
+        "mean": np.mean(vote_f1s),
+        "std": np.std(vote_f1s),
     }
 
     plot_model_comparison(
@@ -501,7 +584,21 @@ def main():
                 f"{tm['f1']:.4f},{tm['precision']:.4f},"
                 f"{tm['recall']:.4f},,\n"
             )
+        # Graph-only baseline
+        for seed in SEEDS:
+            vr = vote_results[seed]
+            f.write(f"Neighbour vote,{seed},{vr['accuracy']:.4f},{vr['f1']:.4f},,,,\n")
     print(f"Saved: {csv_path}")
+
+    sweep_path = os.path.join(RESULTS_DIR, "homophily_sweep.csv")
+    with open(sweep_path, "w") as f:
+        f.write("target_homophily,homophily,method,accuracy_mean,accuracy_std\n")
+        for i, target in enumerate(HOMOPHILY_LEVELS):
+            for method in ("MLP", "Neighbour vote", "GCN-1", "GCN-3"):
+                accs = sweep[method][i]
+                f.write(f"{target},{sweep['homophily'][i]:.4f},{method},"
+                        f"{np.mean(accs):.4f},{np.std(accs):.4f}\n")
+    print(f"Saved: {sweep_path}")
 
     # Save JSON
     json_results = {
@@ -532,6 +629,20 @@ def main():
             "random_graph_f1_std": float(np.std(ablation_f1s)),
             "random_graph_homophily_mean": float(np.mean(random_homophilies)),
             "random_graph_homophily_std": float(np.std(random_homophilies)),
+        },
+        "neighbour_vote": {
+            "accuracy_mean": float(np.mean(vote_accs)),
+            "accuracy_std": float(np.std(vote_accs)),
+            "f1_mean": float(np.mean(vote_f1s)),
+            "f1_std": float(np.std(vote_f1s)),
+            "individual_accuracies": [float(a) for a in vote_accs],
+        },
+        "homophily_sweep": {
+            "target_homophily": HOMOPHILY_LEVELS,
+            "realised_homophily": sweep["homophily"],
+            **{m: {"accuracy_mean": [float(np.mean(a)) for a in sweep[m]],
+                   "accuracy_std": [float(np.std(a)) for a in sweep[m]]}
+               for m in ("MLP", "Neighbour vote", "GCN-1", "GCN-3")},
         },
     }
     for model_name in model_configs:

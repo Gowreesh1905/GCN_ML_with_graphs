@@ -54,7 +54,7 @@ This project requires Python 3.12+ and several standard data science libraries.
 
 ## 4. Running the Tests
 
-The project includes 55 automated unit tests verifying mathematical correctness, dimensions, normalization bounds, evaluation metrics, early stopping, plotting, and model behaviour.
+The project includes 59 automated unit tests verifying mathematical correctness, dimensions, normalization bounds, evaluation metrics, early stopping, the neighbour-vote baseline, plotting, and model behaviour.
 
 To run the test suite:
 ```bash
@@ -70,6 +70,8 @@ The main experiment script generates the graph, applies normalization, trains an
 - Each seed draws a **new train/validation/test split and a new weight initialization**; the graph and node features are the same for every seed.
 - All models are trained the same way: Adam (learning rate 0.01, weight decay 5e-4), dropout 0.5, and **early stopping** on validation loss (patience 30, at most 500 epochs; the best weights are restored).
 - For comparison, a 3-layer GCN is also trained **without** dropout, weight decay or early stopping (fixed 200 epochs).
+- A **neighbour majority vote** baseline (no features, no learning: each test student gets the label most of their labelled neighbours have) measures how much the graph alone can do.
+- A **homophily sweep** repeats the comparison on graphs with homophily 0.9, 0.8, 0.7, 0.6 and 0.5 (same students, features, splits and expected number of edges).
 
 To run the full pipeline:
 ```bash
@@ -90,9 +92,10 @@ gcn-toy-project/
 │   ├── gcn.py                # Manual PyTorch GCN & MLP implementation
 │   ├── train.py              # Training loop with masking and early stopping
 │   ├── evaluate.py           # Metrics calculation
+│   ├── baselines.py          # Neighbour majority vote (graph-only baseline)
 │   └── visualization.py      # Plotting utilities
 │
-├── tests/                    # 55 unit tests verifying math and logic
+├── tests/                    # 59 unit tests verifying math and logic
 │
 ├── experiments/
 │   ├── run_experiments.py    # Main pipeline runner
@@ -121,15 +124,26 @@ On the synthetic 200-student graph across 10 random seeds (mean ± std, 40 test 
 | Model | Parameters | Train accuracy | Test accuracy |
 |---|---|---|---|
 | MLP (features only) | 50 | 78.8% ± 2.7% | 77.8% ± 5.2% |
+| Neighbour vote (graph only, no learning) | 0 | — | 87.0% ± 6.2% |
 | 1-Layer GCN | 6 | 90.9% ± 2.2% | 90.5% ± 5.0% |
 | 2-Layer GCN | 40 | 95.5% ± 1.9% | 92.5% ± 4.3% |
 | 3-Layer GCN | 104 | 95.7% ± 1.9% | **94.0% ± 4.4%** |
 | 3-Layer GCN, no regularization | 104 | 96.3% ± 1.7% | 94.3% ± 4.3% |
 | 3-Layer GCN on a random graph | 104 | — | 50.8% ± 10.7% |
 
-- **The graph adds a lot.** Every GCN beats the feature-only MLP by 13–16 points, and on every one of the 10 splits. The features overlap, so a student cannot be classified reliably in isolation; averaging over their study group, most of whom share their result, supplies the missing information.
+- **The graph alone already does a lot.** Simply copying the majority label of a student's labelled neighbours gives 87.0%, ahead of the feature-only MLP (77.8%). Much of the GCN's advantage over the MLP comes from the graph itself.
+- **The GCN does best by combining both.** GCN-3 reaches 94.0%: 7 points above the vote and 16 above the MLP, beating the MLP on every one of the 10 splits. It uses a student's own features when their neighbours disagree or are unlabelled, and it learns from unlabelled neighbours' features.
 - **Depth helps a little.** Accuracy rises from 1 to 3 layers (90.5% → 92.5% → 94.0%), but the steps are smaller than the variation between splits, so this is a trend rather than a firm result. There is no sign of over-smoothing at 3 layers.
 - **The graph must be meaningful.** On a random graph with the same number of edges (homophily ≈ 0.50 vs 0.81), the 3-layer GCN falls to 50.8%, below both the MLP and the 55% majority-class guess: aggregation mixes each student with unrelated students.
+- **The graph has to be reliable enough.** In the homophily sweep (`figures/fig11_homophily_sweep.png`), the GCNs beat the neighbour vote at every level but beat the MLP only at homophily 0.7 and above. At 0.6 and 0.5 a GCN is worse than ignoring the graph (GCN-3: 52.5% vs MLP 77.8% at 0.5), and the 3-layer GCN degrades faster than the 1-layer one.
+
+| Homophily | 0.90 | 0.80 | 0.70 | 0.60 | 0.50 |
+|---|---|---|---|---|---|
+| MLP | 77.8% | 77.8% | 77.8% | 77.8% | 77.8% |
+| Neighbour vote | 94.5% | 86.8% | 78.8% | 66.5% | 51.3% |
+| GCN-1 | 95.2% | 89.5% | 82.3% | 72.7% | 60.0% |
+| GCN-3 | 99.5% | 93.2% | 84.3% | 68.8% | 52.5% |
+
 - **Regularization makes no measurable difference here.** With 120 labelled students the 3-layer GCN does not overfit, with or without dropout, weight decay and early stopping. Early stopping still removes the need to pick an epoch count: the 1-layer GCN keeps improving for about 440 epochs, the 3-layer GCN stops after about 120.
 
 ---
@@ -137,10 +151,11 @@ On the synthetic 200-student graph across 10 random seeds (mean ± std, 40 test 
 ## 8. Limitations
 
 This is an **educational toy project**, and its conclusions should not be extrapolated to real-world performance.
-1. The dataset is synthetic. Its homophily (0.81) and feature overlap are chosen parameters, so the size of the GCN's advantage reflects those choices, not real student data.
-2. With 200 nodes and 40 test students per split, one mistake moves accuracy by 2.5 points; differences between the GCN depths are within this noise.
-3. The graph and features are fixed across seeds; only the split and initialization vary.
-4. Operations use dense matrices $O(N^2)$, which is conceptually clear but does not scale to large graphs (which require sparse tensors).
+1. The dataset is synthetic. Its homophily (0.81) and feature overlap are chosen parameters; the homophily sweep shows how strongly the GCN's advantage depends on the first.
+2. The neighbour vote is the simplest graph baseline; label propagation could be stronger.
+3. With 200 nodes and 40 test students per split, one mistake moves accuracy by 2.5 points; differences between the GCN depths are within this noise.
+4. The graph and features are fixed across seeds; only the split and initialization vary.
+5. Operations use dense matrices $O(N^2)$, which is conceptually clear but does not scale to large graphs (which require sparse tensors).
 
 ---
 
